@@ -1,0 +1,7 @@
+# OpenRouter profile - default for development
+# Uses OpenRouter as the primary provider for easy access to multiple models
+
+defaults:
+  chat: openrouter/minimax/minimax-m2.1
+  vision: openrouter/google/gemini-2.5-flash
+  embedding: openai/text-embedding-3-small

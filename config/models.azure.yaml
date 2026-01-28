@@ -1,0 +1,7 @@
+# Azure profile - enterprise deployments
+# Uses Azure OpenAI or GenAI Platform gateway
+
+defaults:
+  chat: azure_openai/gpt-4o
+  vision: azure_openai/gpt-4o
+  embedding: openai/text-embedding-3-small

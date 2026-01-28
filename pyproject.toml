@@ -1,0 +1,72 @@
+[project]
+name = "agentone-ai-services"
+version = "0.1.0"
+description = "AgentOne AI Services - LLM and AI service providers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # Core dependencies
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0.1",
+    "python-ulid>=2.2.0",
+    "structlog>=24.1.0",
+
+    # FastAPI for HTTP service
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "httpx>=0.26.0",
+
+    # OpenAI SDK (for OpenAI and OpenRouter)
+    "openai>=1.10.0",
+
+    # LangChain for Azure and Vertex AI
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-google-vertexai>=2.0.0",
+
+    # Azure authentication
+    "azure-identity>=1.15.0",
+    "azure-core>=1.30.0",
+
+    # Google Cloud authentication
+    "google-auth>=2.0.0",
+
+    # OpenTelemetry for observability
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "azure-monitor-opentelemetry>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+]
+
+[tool.uv.sources]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
