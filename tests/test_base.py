@@ -1,9 +1,13 @@
 """Tests for LLM base types."""
 
+from collections.abc import AsyncGenerator
+from typing import Any
+from unittest.mock import MagicMock
+
 import pytest
 
 from services.llm_service.core.llm.base import (
-    ContentBlock,
+    BaseLLMClient,
     ImageContent,
     LLMChunk,
     LLMMessage,
@@ -13,6 +17,7 @@ from services.llm_service.core.llm.base import (
     content_to_string,
     to_langchain_content,
 )
+from services.llm_service.core.llm.credentials import CredentialProvider
 
 
 class TestLLMMessage:
@@ -166,3 +171,211 @@ class TestLLMResponse:
         )
         assert len(response.tool_calls) == 1
         assert response.finish_reason == "tool_calls"
+
+
+class TestBaseLLMClientTemplateMethod:
+    """Tests for BaseLLMClient template method pattern."""
+
+    def test_initialize_client_calls_hooks_in_order(self):
+        """Test that _initialize_client() calls hooks in correct order."""
+        call_order: list[str] = []
+
+        class MockCredentialProvider:
+            """Mock credential provider for testing."""
+
+            def get_credentials(self) -> dict[str, Any]:
+                call_order.append("get_credentials")
+                return {"api_key": "test-key"}
+
+        class TestClient(BaseLLMClient):
+            """Test client that tracks method call order."""
+
+            def _get_credential_provider(self) -> CredentialProvider:
+                call_order.append("get_credential_provider")
+                return MockCredentialProvider()  # type: ignore[return-value]
+
+            def _get_endpoint(self) -> str:
+                call_order.append("get_endpoint")
+                return "https://api.example.com"
+
+            def _create_client_instance(
+                self, credentials: dict[str, Any], endpoint: str
+            ) -> Any:
+                call_order.append("create_client_instance")
+                return {"credentials": credentials, "endpoint": endpoint}
+
+            async def generate_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> AsyncGenerator[LLMChunk, None]:
+                yield LLMChunk(delta="test")
+
+            async def generate(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                return LLMResponse(content="test")
+
+            async def close(self) -> None:
+                pass
+
+        client = TestClient()
+        result = client._initialize_client()
+
+        # Verify call order: get_credential_provider -> get_credentials -> get_endpoint -> create_client_instance
+        assert call_order == [
+            "get_credential_provider",
+            "get_credentials",
+            "get_endpoint",
+            "create_client_instance",
+        ]
+
+        # Verify the result contains the correct data
+        assert result["credentials"] == {"api_key": "test-key"}
+        assert result["endpoint"] == "https://api.example.com"
+
+    def test_client_property_lazy_initialization(self):
+        """Test that client property lazily initializes the client."""
+        create_count = 0
+
+        class MockCredentialProvider:
+            def get_credentials(self) -> dict[str, Any]:
+                return {"api_key": "test-key"}
+
+        class TestClient(BaseLLMClient):
+            def _get_credential_provider(self) -> CredentialProvider:
+                return MockCredentialProvider()  # type: ignore[return-value]
+
+            def _get_endpoint(self) -> str:
+                return "https://api.example.com"
+
+            def _create_client_instance(
+                self, credentials: dict[str, Any], endpoint: str
+            ) -> Any:
+                nonlocal create_count
+                create_count += 1
+                return MagicMock()
+
+            async def generate_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> AsyncGenerator[LLMChunk, None]:
+                yield LLMChunk(delta="test")
+
+            async def generate(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                return LLMResponse(content="test")
+
+            async def close(self) -> None:
+                pass
+
+        client = TestClient()
+
+        # Client not created yet
+        assert create_count == 0
+
+        # First access creates the client
+        _ = client.client
+        assert create_count == 1
+
+        # Subsequent accesses return cached instance
+        _ = client.client
+        _ = client.client
+        assert create_count == 1
+
+    def test_initialize_client_without_credential_provider_raises(self):
+        """Test that _initialize_client() raises if no credential provider."""
+
+        class TestClient(BaseLLMClient):
+            # Does not override _get_credential_provider, so it returns None
+
+            async def generate_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> AsyncGenerator[LLMChunk, None]:
+                yield LLMChunk(delta="test")
+
+            async def generate(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                return LLMResponse(content="test")
+
+            async def close(self) -> None:
+                pass
+
+        client = TestClient()
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            client._initialize_client()
+
+        assert "_get_credential_provider()" in str(exc_info.value)
+
+    def test_create_client_instance_not_implemented_raises(self):
+        """Test that _create_client_instance() raises NotImplementedError by default."""
+
+        class MockCredentialProvider:
+            def get_credentials(self) -> dict[str, Any]:
+                return {"api_key": "test-key"}
+
+        class TestClient(BaseLLMClient):
+            def _get_credential_provider(self) -> CredentialProvider:
+                return MockCredentialProvider()  # type: ignore[return-value]
+
+            # Does not override _create_client_instance
+
+            async def generate_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> AsyncGenerator[LLMChunk, None]:
+                yield LLMChunk(delta="test")
+
+            async def generate(
+                self,
+                messages: list[LLMMessage],
+                tools: list[LLMToolDefinition] | None = None,
+                system_prompt: str | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                return LLMResponse(content="test")
+
+            async def close(self) -> None:
+                pass
+
+        client = TestClient()
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            client._initialize_client()
+
+        assert "_create_client_instance()" in str(exc_info.value)
