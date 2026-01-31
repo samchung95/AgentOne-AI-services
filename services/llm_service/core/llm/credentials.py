@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
+import google.auth
+from google.auth.credentials import Credentials as GoogleCredentials
+
 if TYPE_CHECKING:
     from services.llm_service.core.llm.azure_token import TokenProvider
 
@@ -86,3 +89,40 @@ class AzureADCredentialProvider:
             "token": self._token_provider.token(),
             "token_type": "Bearer",
         }
+
+
+class GCPCredentialProvider:
+    """Credential provider for Google Cloud Platform authentication.
+
+    Uses google-auth library to retrieve Application Default Credentials (ADC)
+    or explicitly provided credentials for GCP services like Vertex AI.
+    """
+
+    def __init__(
+        self,
+        credentials: GoogleCredentials | None = None,
+        scopes: list[str] | None = None,
+    ) -> None:
+        """Initialize with optional credentials and scopes.
+
+        Args:
+            credentials: Optional pre-configured Google credentials.
+                        If None, Application Default Credentials (ADC) will be used.
+            scopes: Optional list of OAuth scopes to request.
+                   Defaults to ['https://www.googleapis.com/auth/cloud-platform'].
+        """
+        self._scopes = scopes or ["https://www.googleapis.com/auth/cloud-platform"]
+
+        if credentials is not None:
+            self._credentials = credentials
+        else:
+            # Use Application Default Credentials (ADC)
+            self._credentials, _ = google.auth.default(scopes=self._scopes)
+
+    def get_credentials(self) -> dict[str, Any]:
+        """Return credentials containing the GCP credentials object.
+
+        Returns:
+            Dictionary with 'credentials' key containing the Google credentials object.
+        """
+        return {"credentials": self._credentials}

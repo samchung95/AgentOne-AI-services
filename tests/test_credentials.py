@@ -1,12 +1,13 @@
 """Tests for credential providers."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from services.llm_service.core.llm.credentials import (
     APIKeyCredentialProvider,
     AzureADCredentialProvider,
+    GCPCredentialProvider,
 )
 
 
@@ -117,3 +118,73 @@ class TestAzureADCredentialProvider:
         # Should be equal but not the same object
         assert credentials1 == credentials2
         assert credentials1 is not credentials2
+
+
+class TestGCPCredentialProvider:
+    """Tests for GCPCredentialProvider class."""
+
+    def test_get_credentials_returns_credentials_object(self):
+        """Test that get_credentials returns credentials in correct format."""
+        mock_credentials = Mock()
+
+        provider = GCPCredentialProvider(credentials=mock_credentials)
+        credentials = provider.get_credentials()
+
+        assert "credentials" in credentials
+        assert credentials["credentials"] is mock_credentials
+
+    def test_custom_scopes_are_stored(self):
+        """Test that custom scopes are stored correctly."""
+        mock_credentials = Mock()
+        custom_scopes = ["https://www.googleapis.com/auth/bigquery"]
+
+        provider = GCPCredentialProvider(credentials=mock_credentials, scopes=custom_scopes)
+
+        assert provider._scopes == custom_scopes
+
+    def test_default_scopes_are_applied(self):
+        """Test that default cloud-platform scope is applied when not specified."""
+        mock_credentials = Mock()
+
+        provider = GCPCredentialProvider(credentials=mock_credentials)
+
+        assert provider._scopes == ["https://www.googleapis.com/auth/cloud-platform"]
+
+    @patch("services.llm_service.core.llm.credentials.google.auth.default")
+    def test_uses_adc_when_no_credentials_provided(self, mock_default):
+        """Test that Application Default Credentials are used when credentials=None."""
+        mock_adc_credentials = Mock()
+        mock_default.return_value = (mock_adc_credentials, "test-project")
+
+        provider = GCPCredentialProvider()
+        credentials = provider.get_credentials()
+
+        mock_default.assert_called_once_with(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        assert credentials["credentials"] is mock_adc_credentials
+
+    @patch("services.llm_service.core.llm.credentials.google.auth.default")
+    def test_uses_adc_with_custom_scopes(self, mock_default):
+        """Test that ADC is called with custom scopes when provided."""
+        mock_adc_credentials = Mock()
+        mock_default.return_value = (mock_adc_credentials, "test-project")
+        custom_scopes = ["https://www.googleapis.com/auth/compute"]
+
+        provider = GCPCredentialProvider(scopes=custom_scopes)
+        credentials = provider.get_credentials()
+
+        mock_default.assert_called_once_with(scopes=custom_scopes)
+        assert credentials["credentials"] is mock_adc_credentials
+
+    def test_provider_implements_protocol(self):
+        """Test that GCPCredentialProvider satisfies CredentialProvider protocol."""
+        mock_credentials = Mock()
+
+        provider = GCPCredentialProvider(credentials=mock_credentials)
+
+        # Verify it has the get_credentials method
+        assert hasattr(provider, "get_credentials")
+        assert callable(provider.get_credentials)
+
+        # Verify return type matches protocol expectation
+        credentials = provider.get_credentials()
+        assert isinstance(credentials, dict)
