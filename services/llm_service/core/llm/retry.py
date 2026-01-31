@@ -15,6 +15,8 @@ from typing import Any, ParamSpec, TypeVar
 
 import structlog
 
+from services.llm_service.core.config.constants import RETRYABLE_STATUS_CODES
+
 logger = structlog.get_logger(__name__)
 
 P = ParamSpec("P")
@@ -52,7 +54,7 @@ class RetryConfig:
     jitter: bool = True
     jitter_factor: float = 0.25
     strategy: RetryStrategy = RetryStrategy.EXPONENTIAL_BACKOFF
-    retryable_status_codes: set[int] = field(default_factory=lambda: {429, 500, 502, 503, 504})
+    retryable_status_codes: set[int] = field(default_factory=lambda: set(RETRYABLE_STATUS_CODES))
     retryable_exceptions: tuple[type[Exception], ...] = field(
         default_factory=lambda: (
             ConnectionError,
