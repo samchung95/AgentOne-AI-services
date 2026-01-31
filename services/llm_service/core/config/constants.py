@@ -3,7 +3,41 @@
 This module centralizes all hardcoded values for the LLM service.
 """
 
+from enum import Enum
 from typing import Final
+
+# =============================================================================
+# Provider Identification
+# =============================================================================
+
+
+class ProviderID(str, Enum):
+    """Enumeration of supported LLM providers.
+
+    Using str as base allows direct comparison with strings and serialization.
+    """
+
+    OPENAI = "openai"
+    OPENROUTER = "openrouter"
+    AZURE_OPENAI = "azure_openai"
+    VERTEX_AI = "vertex_ai"
+    REMOTE = "remote"
+
+
+# =============================================================================
+# Retry Configuration
+# =============================================================================
+
+#: HTTP status codes that should trigger a retry
+#: 429 = Rate Limited, 5xx = Server Errors
+RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
+
+#: Default maximum number of retry attempts
+DEFAULT_MAX_RETRIES: Final[int] = 3
+
+#: Default timeout for API calls (seconds)
+#: Alias for DEFAULT_LLM_TIMEOUT_SECONDS for consistency with PRD naming
+DEFAULT_TIMEOUT_SECONDS: Final[int] = 60
 
 # =============================================================================
 # LLM Dispatcher Configuration
