@@ -17,6 +17,11 @@ from services.llm_service.core.llm.base import (
     LLMToolDefinition,
     to_langchain_content,
 )
+from services.llm_service.core.llm.credentials import (
+    APIKeyCredentialProvider,
+    AzureADCredentialProvider,
+    CredentialProvider,
+)
 from shared.protocol.common import Usage
 from shared.protocol.tool_models import ToolCall
 from shared.validators.id_generators import generate_tool_call_id
@@ -34,8 +39,17 @@ class AzureOpenAIClient(BaseLLMClient):
             settings: Application settings. Uses get_settings() if not provided.
         """
         self._settings = settings or get_settings()
-        self._chat: AzureChatOpenAI | None = None
+        self._client_instance: AzureChatOpenAI | None = None
         self._model_name = self._settings.azure_openai_deployment
+        # Direct config attributes (set by from_model_config)
+        self._direct_endpoint: str | None = None
+        self._direct_api_key: str | None = None
+        self._direct_api_version: str | None = None
+        self._genai_platform_enabled: bool = False
+        self._genai_platform_base_url: str | None = None
+        self._genai_platform_path: str | None = None
+        self._genai_platform_user_id: str | None = None
+        self._genai_platform_project_name: str | None = None
 
     @classmethod
     def from_model_config(
@@ -53,7 +67,7 @@ class AzureOpenAIClient(BaseLLMClient):
         """Create client from model configuration."""
         instance = cls.__new__(cls)
         instance._settings = None
-        instance._chat = None
+        instance._client_instance = None
         instance._model_name = deployment
         instance._direct_endpoint = endpoint
         instance._direct_api_key = api_key
@@ -66,83 +80,129 @@ class AzureOpenAIClient(BaseLLMClient):
         instance._genai_platform_project_name = genai_platform_project_name
         return instance
 
-    def _ensure_client(self) -> AzureChatOpenAI:
-        """Ensure LangChain client is initialized."""
-        if self._chat is None:
-            # Get config values from settings or direct attributes
-            if self._settings:
-                genai_enabled = self._settings.genai_platform_enabled
-                genai_base_url = self._settings.genai_platform_base_url
-                genai_path = self._settings.genai_platform_path
-                genai_user_id = self._settings.genai_platform_user_id
-                genai_project_name = self._settings.genai_platform_project_name
-                api_version = self._settings.azure_openai_api_version
-                direct_endpoint = self._settings.azure_openai_endpoint
-                direct_api_key = self._settings.azure_openai_api_key
-            else:
-                genai_enabled = getattr(self, "_genai_platform_enabled", False)
-                genai_base_url = getattr(self, "_genai_platform_base_url", None)
-                genai_path = getattr(self, "_genai_platform_path", None)
-                genai_user_id = getattr(self, "_genai_platform_user_id", None)
-                genai_project_name = getattr(self, "_genai_platform_project_name", None)
-                api_version = getattr(self, "_direct_api_version", "2024-08-01-preview")
-                direct_endpoint = getattr(self, "_direct_endpoint", "")
-                direct_api_key = getattr(self, "_direct_api_key", None)
+    def _get_endpoint(self) -> str:
+        """Return the Azure OpenAI endpoint URL.
 
-            # Build headers for GenAI Platform
-            headers: dict[str, str] = {}
-            if genai_user_id:
-                headers["userid"] = genai_user_id
-            if genai_project_name:
-                headers["project-name"] = genai_project_name
+        Handles three modes:
+        - GenAI Platform: Constructs endpoint from base URL and path
+        - Direct/Settings: Returns the configured Azure endpoint
 
-            if genai_enabled and genai_base_url:
-                genai_token = get_genai_token_provider().token()
-                path = genai_path.lstrip("/") if genai_path else "stg/v1"
-                endpoint = f"{genai_base_url.rstrip('/')}/{path}"
+        Returns:
+            The Azure OpenAI endpoint URL.
+        """
+        if self._settings:
+            genai_enabled = self._settings.genai_platform_enabled
+            genai_base_url = self._settings.genai_platform_base_url
+            genai_path = self._settings.genai_platform_path
+            direct_endpoint = self._settings.azure_openai_endpoint
+        else:
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+            genai_path = self._genai_platform_path
+            direct_endpoint = self._direct_endpoint or ""
 
-                self._chat = AzureChatOpenAI(
-                    azure_endpoint=endpoint,
-                    azure_deployment=self._model_name,
-                    api_version=api_version,
-                    api_key=genai_token,
-                    default_headers=headers if headers else None,
-                )
+        if genai_enabled and genai_base_url:
+            path = genai_path.lstrip("/") if genai_path else "stg/v1"
+            return f"{genai_base_url.rstrip('/')}/{path}"
 
-                logger.info(
-                    "azure_openai_client_initialized_genai_platform",
-                    endpoint=endpoint,
-                    deployment=self._model_name,
-                )
-            elif direct_api_key:
-                self._chat = AzureChatOpenAI(
-                    azure_endpoint=direct_endpoint,
-                    azure_deployment=self._model_name,
-                    api_version=api_version,
-                    api_key=direct_api_key,
-                )
+        return direct_endpoint
 
-                logger.info(
-                    "azure_openai_client_initialized",
-                    endpoint=direct_endpoint,
-                    deployment=self._model_name,
-                )
-            else:
-                genai_token = get_genai_token_provider().token()
-                self._chat = AzureChatOpenAI(
-                    azure_endpoint=direct_endpoint,
-                    azure_deployment=self._model_name,
-                    api_version=api_version,
-                    api_key=genai_token,
-                )
+    def _get_credential_provider(self) -> CredentialProvider:
+        """Return the credential provider for Azure OpenAI.
 
-                logger.info(
-                    "azure_openai_client_initialized_genai_token",
-                    endpoint=direct_endpoint,
-                    deployment=self._model_name,
-                )
+        Handles three modes:
+        - GenAI Platform: Uses AzureADCredentialProvider
+        - Direct API key: Uses APIKeyCredentialProvider
+        - Default: Uses AzureADCredentialProvider (GenAI token without platform)
 
-        return self._chat
+        Returns:
+            The appropriate CredentialProvider for the configuration.
+        """
+        if self._settings:
+            genai_enabled = self._settings.genai_platform_enabled
+            genai_base_url = self._settings.genai_platform_base_url
+            direct_api_key = self._settings.azure_openai_api_key
+        else:
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+            direct_api_key = self._direct_api_key
+
+        # GenAI Platform mode - use Azure AD token
+        if genai_enabled and genai_base_url:
+            return AzureADCredentialProvider(get_genai_token_provider())
+
+        # Direct API key mode
+        if direct_api_key:
+            return APIKeyCredentialProvider(direct_api_key)
+
+        # Default: Azure AD token without GenAI Platform endpoint
+        return AzureADCredentialProvider(get_genai_token_provider())
+
+    def _create_client_instance(
+        self, credentials: dict[str, Any], endpoint: str
+    ) -> AzureChatOpenAI:
+        """Create the AzureChatOpenAI client instance.
+
+        Args:
+            credentials: Dictionary with either 'api_key' or 'token' from credential provider.
+            endpoint: The Azure OpenAI endpoint URL.
+
+        Returns:
+            Configured AzureChatOpenAI client.
+        """
+        # Get API version from settings or direct config
+        if self._settings:
+            api_version = self._settings.azure_openai_api_version
+            genai_enabled = self._settings.genai_platform_enabled
+            genai_base_url = self._settings.genai_platform_base_url
+            genai_user_id = self._settings.genai_platform_user_id
+            genai_project_name = self._settings.genai_platform_project_name
+        else:
+            api_version = self._direct_api_version or "2024-08-01-preview"
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+            genai_user_id = self._genai_platform_user_id
+            genai_project_name = self._genai_platform_project_name
+
+        # Build headers for GenAI Platform
+        headers: dict[str, str] = {}
+        if genai_user_id:
+            headers["userid"] = genai_user_id
+        if genai_project_name:
+            headers["project-name"] = genai_project_name
+
+        # Extract API key from credentials (could be 'api_key' or 'token')
+        api_key = credentials.get("api_key") or credentials.get("token", "")
+
+        client = AzureChatOpenAI(
+            azure_endpoint=endpoint,
+            azure_deployment=self._model_name,
+            api_version=api_version,
+            api_key=api_key,
+            default_headers=headers if headers else None,
+        )
+
+        # Log initialization based on mode
+        if genai_enabled and genai_base_url:
+            logger.info(
+                "azure_openai_client_initialized_genai_platform",
+                endpoint=endpoint,
+                deployment=self._model_name,
+            )
+        elif credentials.get("api_key"):
+            logger.info(
+                "azure_openai_client_initialized",
+                endpoint=endpoint,
+                deployment=self._model_name,
+            )
+        else:
+            logger.info(
+                "azure_openai_client_initialized_genai_token",
+                endpoint=endpoint,
+                deployment=self._model_name,
+            )
+
+        return client
 
     def _convert_to_langchain_messages(
         self,
@@ -222,7 +282,7 @@ class AzureOpenAIClient(BaseLLMClient):
         max_tokens: int | None = None,
     ) -> AsyncGenerator[LLMChunk, None]:
         """Generate a streaming response using LangChain."""
-        chat = self._ensure_client()
+        chat = self.client
 
         lc_messages = self._convert_to_langchain_messages(messages, system_prompt)
 
@@ -282,7 +342,7 @@ class AzureOpenAIClient(BaseLLMClient):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """Generate a complete response using LangChain."""
-        chat = self._ensure_client()
+        chat = self.client
 
         lc_messages = self._convert_to_langchain_messages(messages, system_prompt)
 
@@ -334,5 +394,5 @@ class AzureOpenAIClient(BaseLLMClient):
 
     async def close(self) -> None:
         """Close the client."""
-        self._chat = None
+        self._client_instance = None
         logger.info("azure_openai_client_closed")
