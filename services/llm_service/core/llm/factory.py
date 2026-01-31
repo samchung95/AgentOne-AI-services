@@ -8,6 +8,7 @@ Provides a unified interface for creating LLM clients based on:
 
 import structlog
 
+from services.llm_service.core.config.constants import ProviderID
 from services.llm_service.core.config.models import (
     ModelInfo,
     get_model_for_use_case,
@@ -112,13 +113,13 @@ class LLMFactory:
             full_id=model_info.id,
         )
 
-        if provider == "openrouter":
+        if provider == ProviderID.OPENROUTER:
             return cls._create_openrouter_client(model_name, creds)
-        elif provider == "openai":
+        elif provider == ProviderID.OPENAI:
             return cls._create_openai_client(model_name, creds)
-        elif provider == "azure_openai":
+        elif provider == ProviderID.AZURE_OPENAI:
             return cls._create_azure_openai_client(model_info, creds)
-        elif provider == "vertex_ai":
+        elif provider == ProviderID.VERTEX_AI:
             return cls._create_vertex_client(model_info, creds)
         else:
             raise ConfigurationError(f"Unsupported LLM provider: {provider}")
@@ -130,7 +131,7 @@ class LLMFactory:
 
         api_key = creds.get("api_key")
         if not api_key:
-            raise MissingAPIKeyError("openrouter", "OPENROUTER_API_KEY")
+            raise MissingAPIKeyError(ProviderID.OPENROUTER, "OPENROUTER_API_KEY")
 
         return OpenRouterClient.from_model_config(
             model=model_name,
@@ -146,7 +147,7 @@ class LLMFactory:
 
         api_key = creds.get("api_key")
         if not api_key:
-            raise MissingAPIKeyError("openai", "OPENAI_API_KEY")
+            raise MissingAPIKeyError(ProviderID.OPENAI, "OPENAI_API_KEY")
 
         return OpenAIClient.from_model_config(
             model=model_name,
