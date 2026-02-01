@@ -4,6 +4,62 @@ Provides shared functionality for Azure and Vertex AI clients when using
 the GenAI Platform gateway.
 """
 
+from services.llm_service.core.config.constants import ProviderID
+
+# =============================================================================
+# Default Configuration
+# =============================================================================
+
+#: Default path for GenAI Platform endpoints when none is configured
+DEFAULT_GENAI_PATH = "stg/v1"
+
+# =============================================================================
+# Endpoint Resolution
+# =============================================================================
+
+
+def resolve_genai_endpoint(
+    base_url: str,
+    path: str | None = None,
+    provider: ProviderID | None = None,
+) -> str:
+    """Resolve the full GenAI Platform endpoint URL.
+
+    Constructs the complete endpoint URL by joining the base URL and path,
+    handling edge cases like missing slashes and empty paths. For Vertex AI,
+    appends the /vertexai suffix as required by the GenAI Platform gateway.
+
+    Args:
+        base_url: The GenAI Platform base URL (e.g., "https://genai.example.com").
+        path: The API path (e.g., "stg/v1" or "/stg/v1"). Defaults to "stg/v1" if None or empty.
+        provider: The LLM provider for provider-specific path suffixes.
+                  Vertex AI gets "/vertexai" appended.
+
+    Returns:
+        The fully resolved endpoint URL.
+
+    Example:
+        >>> resolve_genai_endpoint("https://genai.example.com", "stg/v1", ProviderID.AZURE_OPENAI)
+        'https://genai.example.com/stg/v1'
+        >>> resolve_genai_endpoint("https://genai.example.com/", "/stg/v1/", ProviderID.VERTEX_AI)
+        'https://genai.example.com/stg/v1/vertexai'
+    """
+    # Normalize base URL - remove trailing slashes
+    normalized_base = base_url.rstrip("/") if base_url else ""
+
+    # Normalize path - use default if empty, strip leading/trailing slashes
+    normalized_path = (path.strip("/") if path else "") or DEFAULT_GENAI_PATH
+
+    # Build the endpoint URL
+    endpoint = f"{normalized_base}/{normalized_path}"
+
+    # Add provider-specific suffix for Vertex AI
+    if provider == ProviderID.VERTEX_AI:
+        endpoint = f"{endpoint}/vertexai"
+
+    return endpoint
+
+
 # =============================================================================
 # Header Building
 # =============================================================================

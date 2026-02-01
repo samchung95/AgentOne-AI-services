@@ -1,6 +1,11 @@
 """Tests for GenAI Platform module."""
 
-from services.llm_service.core.llm.genai_platform import build_genai_headers
+from services.llm_service.core.config.constants import ProviderID
+from services.llm_service.core.llm.genai_platform import (
+    DEFAULT_GENAI_PATH,
+    build_genai_headers,
+    resolve_genai_endpoint,
+)
 
 
 class TestBuildGenaiHeaders:
@@ -81,3 +86,127 @@ class TestBuildGenaiHeaders:
         assert headers1 is not headers2
         assert headers1["userid"] == "user1"
         assert headers2["userid"] == "user2"
+
+
+class TestResolveGenaiEndpoint:
+    """Tests for resolve_genai_endpoint function."""
+
+    def test_basic_url_joining(self):
+        """Test basic URL joining without trailing/leading slashes."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "stg/v1")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_removes_trailing_slash_from_base_url(self):
+        """Test that trailing slash is removed from base URL."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com/", "stg/v1")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_removes_leading_slash_from_path(self):
+        """Test that leading slash is removed from path."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "/stg/v1")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_handles_both_slashes(self):
+        """Test URL joining when both base has trailing and path has leading slash."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com/", "/stg/v1")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_removes_trailing_slash_from_path(self):
+        """Test that trailing slash is removed from path."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "stg/v1/")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_handles_all_slashes(self):
+        """Test URL joining when both have trailing and leading slashes."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com/", "/stg/v1/")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_uses_default_path_when_path_is_none(self):
+        """Test that default path is used when path is None."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", None)
+
+        assert endpoint == f"https://genai.example.com/{DEFAULT_GENAI_PATH}"
+
+    def test_uses_default_path_when_path_is_empty_string(self):
+        """Test that default path is used when path is empty string."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "")
+
+        assert endpoint == f"https://genai.example.com/{DEFAULT_GENAI_PATH}"
+
+    def test_uses_default_path_when_path_is_only_slashes(self):
+        """Test that default path is used when path is only slashes."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "///")
+
+        assert endpoint == f"https://genai.example.com/{DEFAULT_GENAI_PATH}"
+
+    def test_vertex_ai_appends_vertexai_suffix(self):
+        """Test that Vertex AI provider gets /vertexai suffix appended."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com", "stg/v1", ProviderID.VERTEX_AI
+        )
+
+        assert endpoint == "https://genai.example.com/stg/v1/vertexai"
+
+    def test_azure_openai_no_suffix(self):
+        """Test that Azure OpenAI does not get any suffix appended."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com", "stg/v1", ProviderID.AZURE_OPENAI
+        )
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_openai_no_suffix(self):
+        """Test that OpenAI does not get any suffix appended."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com", "stg/v1", ProviderID.OPENAI
+        )
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_none_provider_no_suffix(self):
+        """Test that None provider does not get any suffix appended."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com", "stg/v1", None)
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_vertex_ai_with_slashes(self):
+        """Test Vertex AI with trailing/leading slashes are handled correctly."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com/", "/stg/v1/", ProviderID.VERTEX_AI
+        )
+
+        assert endpoint == "https://genai.example.com/stg/v1/vertexai"
+
+    def test_complex_path(self):
+        """Test with multi-segment path."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com", "api/v2/llm/openai"
+        )
+
+        assert endpoint == "https://genai.example.com/api/v2/llm/openai"
+
+    def test_handles_empty_base_url(self):
+        """Test that empty base URL still produces valid path."""
+        endpoint = resolve_genai_endpoint("", "stg/v1")
+
+        assert endpoint == "/stg/v1"
+
+    def test_multiple_trailing_slashes_on_base(self):
+        """Test that multiple trailing slashes are removed from base URL."""
+        endpoint = resolve_genai_endpoint("https://genai.example.com///", "stg/v1")
+
+        assert endpoint == "https://genai.example.com/stg/v1"
+
+    def test_vertex_ai_with_default_path(self):
+        """Test that Vertex AI uses default path and appends suffix correctly."""
+        endpoint = resolve_genai_endpoint(
+            "https://genai.example.com", None, ProviderID.VERTEX_AI
+        )
+
+        assert endpoint == f"https://genai.example.com/{DEFAULT_GENAI_PATH}/vertexai"
