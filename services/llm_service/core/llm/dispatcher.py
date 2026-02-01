@@ -578,6 +578,33 @@ class LLMDispatcher:
             "rate_limit_remaining": rate_limit_remaining,
         }
 
+    def get_provider_health(self) -> list[dict[str, Any]]:
+        """Get per-provider health status for health endpoint.
+
+        Returns a list of provider health info, each containing:
+        - provider_id: Provider name/identifier
+        - health_status: Current health (healthy, degraded, unhealthy)
+        - success_rate: Success rate as float 0.0-1.0
+        - circuit_state: Circuit breaker state (closed, open, half_open)
+
+        Returns:
+            List of provider health dictionaries.
+        """
+        providers = []
+        for name, state in self._providers.items():
+            # Calculate success rate from circuit breaker
+            failure_rate = state.circuit_breaker.get_failure_rate()
+            success_rate = 1.0 - failure_rate
+
+            providers.append({
+                "provider_id": name,
+                "health_status": state.health.value,
+                "success_rate": round(success_rate, 3),
+                "circuit_state": state.circuit_breaker.state.value,
+            })
+
+        return providers
+
 
 class DispatcherContext:
     """Context manager for dispatched requests.

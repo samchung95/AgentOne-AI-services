@@ -247,3 +247,64 @@ class TestDispatcherIntegration:
 
             # Verify status is always "healthy" (even with active requests)
             assert data["status"] == "healthy"
+
+    def test_health_endpoint_includes_provider_health(self):
+        """Test that /health endpoint includes per-provider health status."""
+        with (
+            patch("services.llm_service.main.get_registry") as mock_get_registry,
+            patch("services.llm_service.main.get_dispatcher") as mock_get_dispatcher,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.get_stats.return_value = {"cached_clients": 0}
+            mock_get_registry.return_value = mock_registry
+
+            mock_dispatcher = MagicMock()
+            mock_dispatcher.get_status.return_value = {
+                "active_requests": 0,
+                "queue_depth": 0,
+                "rate_limit_remaining": 10,
+            }
+            # Mock per-provider health
+            mock_dispatcher.get_provider_health.return_value = [
+                {
+                    "provider_id": "openrouter",
+                    "health_status": "healthy",
+                    "success_rate": 0.95,
+                    "circuit_state": "closed",
+                },
+                {
+                    "provider_id": "openai",
+                    "health_status": "degraded",
+                    "success_rate": 0.75,
+                    "circuit_state": "half_open",
+                },
+            ]
+            mock_get_dispatcher.return_value = mock_dispatcher
+
+            from services.llm_service.main import app
+
+            client = TestClient(app)
+
+            response = client.get("/health")
+            assert response.status_code == 200
+            data = response.json()
+
+            # Verify providers field structure
+            assert "providers" in data
+            providers = data["providers"]
+            assert len(providers) == 2
+
+            # Verify first provider (openrouter)
+            openrouter = next(p for p in providers if p["provider_id"] == "openrouter")
+            assert openrouter["health_status"] == "healthy"
+            assert openrouter["success_rate"] == 0.95
+            assert openrouter["circuit_state"] == "closed"
+
+            # Verify second provider (openai)
+            openai = next(p for p in providers if p["provider_id"] == "openai")
+            assert openai["health_status"] == "degraded"
+            assert openai["success_rate"] == 0.75
+            assert openai["circuit_state"] == "half_open"
+
+            # Verify get_provider_health was called
+            mock_dispatcher.get_provider_health.assert_called_once()

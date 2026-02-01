@@ -121,6 +121,7 @@ async def health_check():
     - service: Service name
     - registry: Client registry statistics
     - dispatcher_status: Rate limiting and concurrency status
+    - providers: Per-provider health status with circuit breaker state
     """
     registry = get_registry()
     dispatcher = get_dispatcher()
@@ -129,6 +130,7 @@ async def health_check():
         "service": "llm_service",
         "registry": registry.get_stats(),
         "dispatcher_status": dispatcher.get_status(),
+        "providers": dispatcher.get_provider_health(),
     }
 
 
