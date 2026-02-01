@@ -108,6 +108,10 @@ TOKEN_REFRESH_THRESHOLD_SECONDS: Final[int] = 600  # 10 minutes
 #: Valid range: 100-10000
 DEFAULT_MAX_BUFFER_CHUNKS: Final[int] = 1000
 
+#: Whether to replay buffered chunks before retrying on stream failure
+#: When True, previously yielded chunks are re-yielded to maintain consistency
+DEFAULT_ENABLE_STREAM_REPLAY: Final[bool] = True
+
 # =============================================================================
 # Timeout Configuration
 # =============================================================================
