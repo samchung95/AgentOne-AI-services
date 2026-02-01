@@ -290,8 +290,10 @@ class VertexAIClient(BaseLLMClient):
                                 args = json.loads(args)
                             except json.JSONDecodeError:
                                 args = {}
-                        tool_call_id = tc.get("id") or tc.get("tool_call_id") or generate_tool_call_id()
-                        tool_call_id = normalize_tool_call_id(tool_call_id if isinstance(tool_call_id, str) else None)
+                        raw_tc_id = tc.get("id") or tc.get("tool_call_id") or generate_tool_call_id()
+                        tool_call_id, _ = normalize_tool_call_id(
+                            raw_tc_id if isinstance(raw_tc_id, str) else None
+                        )
 
                         thought_signature = tc.get("thought_signature")
                         if not thought_signature:
@@ -458,7 +460,8 @@ class VertexAIClient(BaseLLMClient):
                             sig_str = sig
                         else:
                             continue
-                        gemini_tool_call_signatures[normalize_tool_call_id(raw_id)] = sig_str
+                        normalized_id, _ = normalize_tool_call_id(raw_id)
+                        gemini_tool_call_signatures[normalized_id] = sig_str
 
             if chunk.content:
                 text = self._langchain_content_to_text(chunk.content)
@@ -492,7 +495,8 @@ class VertexAIClient(BaseLLMClient):
 
                     if tc_chunk.get("id"):
                         raw_id = tc_chunk["id"]
-                        tool_calls[idx]["id"] = normalize_tool_call_id(raw_id if isinstance(raw_id, str) else None)
+                        normalized_id, _ = normalize_tool_call_id(raw_id if isinstance(raw_id, str) else None)
+                        tool_calls[idx]["id"] = normalized_id
                     if tc_chunk.get("name"):
                         tool_calls[idx]["function"]["name"] = tc_chunk["name"]
                     if tc_chunk.get("args"):
@@ -562,7 +566,8 @@ class VertexAIClient(BaseLLMClient):
                         sig_str = sig
                     else:
                         continue
-                    gemini_tool_call_signatures[normalize_tool_call_id(raw_id)] = sig_str
+                    normalized_sig_id, _ = normalize_tool_call_id(raw_id)
+                    gemini_tool_call_signatures[normalized_sig_id] = sig_str
 
         tool_calls_result: list[ToolCall] = []
         if hasattr(response, "tool_calls") and response.tool_calls:
@@ -570,13 +575,15 @@ class VertexAIClient(BaseLLMClient):
             for tc in response.tool_calls:
                 name = tc.get("name", "")
                 tool_def = tool_defs.get(name)
-                tool_call_id = normalize_tool_call_id(tc.get("id") if isinstance(tc.get("id"), str) else None)
+                raw_tc_id = tc.get("id") if isinstance(tc.get("id"), str) else None
+                tool_call_id, original_id = normalize_tool_call_id(raw_tc_id)
                 extensions: dict[str, Any] | None = None
                 if tool_call_id in gemini_tool_call_signatures:
                     extensions = {"thought_signature": gemini_tool_call_signatures[tool_call_id]}
                 tool_calls_result.append(
                     ToolCall(
                         tool_call_id=tool_call_id,
+                        provider_id=original_id,
                         name=name,
                         args=tc.get("args", {}),
                         audience=tool_def.audience if tool_def else "internal",
