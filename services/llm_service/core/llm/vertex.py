@@ -55,7 +55,7 @@ class VertexAIClient(BaseLLMClient):
         """Initialize Vertex AI client."""
         self._settings = settings or get_settings()
         self._client_instance: ChatGoogleGenerativeAI | None = None
-        self._model_name = getattr(self._settings, "vertex_model", DEFAULT_VERTEX_MODEL)
+        self._model_name = self._settings.vertex_ai.model
         self._force_sync: bool = False
         # Direct config attributes (set by from_model_config)
         self._direct_project_id: str | None = None
@@ -169,8 +169,8 @@ class VertexAIClient(BaseLLMClient):
             genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
             genai_user_id = getattr(self._settings, "genai_platform_user_id", None)
             genai_project_name = getattr(self._settings, "genai_platform_project_name", None)
-            project_id = getattr(self._settings, "vertex_project_id", None)
-            location = getattr(self._settings, "vertex_location", DEFAULT_VERTEX_LOCATION)
+            project_id = self._settings.vertex_ai.project_id
+            location = self._settings.vertex_ai.location
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url

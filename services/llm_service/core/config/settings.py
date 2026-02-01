@@ -82,6 +82,26 @@ class AzureOpenAISettings(BaseSettings):
     api_key: str | None = Field(default=None, description="Azure OpenAI API key")
 
 
+class VertexAISettings(BaseSettings):
+    """Vertex AI / Gemini provider settings.
+
+    Environment variables are prefixed with VERTEX_ (e.g., VERTEX_PROJECT_ID).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="VERTEX_",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    project_id: str | None = Field(default=None, description="Google Cloud project ID for Vertex AI")
+    location: str = Field(default="us-central1", description="Vertex AI location/region")
+    model: str = Field(default="gemini-2.5-flash-lite", description="Vertex AI model name")
+    api_key: str | None = Field(default=None, description="API key for Gemini API")
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -129,11 +149,8 @@ class Settings(BaseSettings):
     # OpenRouter Configuration (nested settings)
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
 
-    # Vertex AI / Gemini Configuration
-    vertex_project_id: str | None = Field(default=None, description="Google Cloud project ID for Vertex AI")
-    vertex_location: str = Field(default="us-central1", description="Vertex AI location/region")
-    vertex_model: str = Field(default="gemini-2.5-flash-lite", description="Vertex AI model name")
-    vertex_api_key: str | None = Field(default=None, description="API key for Gemini API")
+    # Vertex AI / Gemini Configuration (nested settings)
+    vertex_ai: VertexAISettings = Field(default_factory=VertexAISettings)
 
     # Telemetry
     appinsights_connection_string: str | None = None
