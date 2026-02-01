@@ -18,6 +18,7 @@ from services.llm_service.core.llm.base import (
     LLMResponse,
     LLMToolDefinition,
 )
+from services.llm_service.core.llm.credentials import APIKeyCredentialProvider, CredentialProvider
 from services.llm_service.core.llm.mixin import OpenAICompatibleMixin, StreamingToolCallAggregator
 from services.llm_service.core.llm.retry import DEFAULT_RETRY_CONFIG, with_retry
 from shared.protocol.common import Usage
@@ -39,8 +40,12 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
             settings: Application settings. Uses get_settings() if not provided.
         """
         self._settings = settings or get_settings()
-        self._client: AsyncOpenAI | None = None
-        self._model_name = self._settings.openrouter_model
+        self._client_instance: AsyncOpenAI | None = None
+        self._model_name = self._settings.openrouter.model
+        self._direct_api_key: str | None = None
+        self._direct_base_url: str | None = None
+        self._direct_site_url: str | None = None
+        self._direct_app_name: str | None = None
 
     @classmethod
     def from_model_config(
@@ -65,7 +70,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
         """
         instance = cls.__new__(cls)
         instance._settings = None
-        instance._client = None
+        instance._client_instance = None
         instance._model_name = model
         instance._direct_api_key = api_key
         instance._direct_base_url = base_url
@@ -73,38 +78,68 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
         instance._direct_app_name = app_name
         return instance
 
-    def _ensure_client(self) -> AsyncOpenAI:
-        """Ensure the async client is initialized."""
-        if self._client is None:
-            if self._settings:
-                api_key = self._settings.openrouter_api_key
-                base_url = self._settings.openrouter_base_url
-                site_url = self._settings.openrouter_site_url
-                app_name = self._settings.openrouter_app_name or "AgentOne"
-            else:
-                api_key = getattr(self, "_direct_api_key", "")
-                base_url = getattr(self, "_direct_base_url", "https://openrouter.ai/api/v1")
-                site_url = getattr(self, "_direct_site_url", None)
-                app_name = getattr(self, "_direct_app_name", "AgentOne")
+    def _get_endpoint(self) -> str:
+        """Return the OpenRouter API endpoint URL.
 
-            # Build default headers for OpenRouter
-            default_headers = {"X-Title": app_name}
-            if site_url:
-                default_headers["HTTP-Referer"] = site_url
+        Returns:
+            The base URL for OpenRouter API.
+        """
+        if self._settings:
+            return self._settings.openrouter.base_url
+        return self._direct_base_url or "https://openrouter.ai/api/v1"
 
-            self._client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                default_headers=default_headers,
-            )
+    def _get_credential_provider(self) -> CredentialProvider:
+        """Return the credential provider for OpenRouter.
 
-            logger.info(
-                "openrouter_client_initialized",
-                model=self._model_name,
-                base_url=base_url,
-            )
+        Returns:
+            APIKeyCredentialProvider with the configured API key.
+        """
+        if self._settings:
+            api_key = self._settings.openrouter.api_key or ""
+        else:
+            api_key = self._direct_api_key or ""
+        return APIKeyCredentialProvider(api_key)
 
-        return self._client
+    def _create_client_instance(
+        self, credentials: dict[str, Any], endpoint: str
+    ) -> AsyncOpenAI:
+        """Create the AsyncOpenAI client instance configured for OpenRouter.
+
+        Args:
+            credentials: Dictionary with 'api_key' from credential provider.
+            endpoint: The API endpoint URL.
+
+        Returns:
+            Configured AsyncOpenAI client with OpenRouter headers.
+        """
+        api_key = credentials.get("api_key", "")
+
+        # Get OpenRouter-specific settings
+        if self._settings:
+            site_url = self._settings.openrouter.site_url
+            app_name = self._settings.openrouter.app_name or "AgentOne"
+        else:
+            site_url = self._direct_site_url
+            app_name = self._direct_app_name or "AgentOne"
+
+        # Build default headers for OpenRouter
+        default_headers = {"X-Title": app_name}
+        if site_url:
+            default_headers["HTTP-Referer"] = site_url
+
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=endpoint,
+            default_headers=default_headers,
+        )
+
+        logger.info(
+            "openrouter_client_initialized",
+            model=self._model_name,
+            base_url=endpoint,
+        )
+
+        return client
 
     async def generate_stream(
         self,
@@ -115,7 +150,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
         max_tokens: int | None = None,
     ) -> AsyncGenerator[LLMChunk, None]:
         """Generate a streaming response from OpenRouter."""
-        client = self._ensure_client()
+        client = self.client
 
         # Convert messages to OpenAI format
         openai_messages = self._convert_messages(messages, system_prompt)
@@ -131,6 +166,11 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+
+        # Disable thinking/reasoning for models that support it (e.g., Moonshot AI kimi-k2.5)
+        # This avoids the complexity of handling reasoning_content in multi-turn conversations
+        if "kimi" in self._model_name.lower() or "moonshotai" in self._model_name.lower():
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
         if openai_tools:
             kwargs["tools"] = openai_tools
@@ -161,6 +201,16 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
                 # Yield content delta
                 if delta.content:
                     yield LLMChunk(delta=delta.content)
+
+                # Handle reasoning_content for thinking/reasoning models
+                # This is returned by models like DeepSeek with thinking enabled
+                reasoning_content = getattr(delta, "reasoning_content", None)
+                if reasoning_content:
+                    logger.debug(
+                        "openrouter_reasoning_content_chunk",
+                        reasoning_content_length=len(reasoning_content),
+                    )
+                    yield LLMChunk(reasoning_content=reasoning_content)
 
                 # Aggregate tool calls
                 if delta.tool_calls:
@@ -197,7 +247,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
 
     async def close(self) -> None:
         """Close the client."""
-        if self._client:
-            await self._client.close()
-            self._client = None
+        if self._client_instance:
+            await self._client_instance.close()
+            self._client_instance = None
             logger.info("openrouter_client_closed")

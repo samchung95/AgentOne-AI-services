@@ -32,6 +32,7 @@ class ToolCall(BaseModel):
     correlation_id: CorrelationId | None = None
     traceparent: Traceparent | None = None
     extensions: dict[str, Any] | None = None
+    provider_id: str | None = None  # Original tool call ID from the provider (for debugging)
 
 
 class ToolStatus(str, Enum):

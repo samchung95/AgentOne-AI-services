@@ -5,7 +5,7 @@ All IDs follow the patterns defined in doc/contracts/schemas/v1/common.schema.js
 - correlation_id: corr_[A-Za-z0-9_-]+
 - session_id: s_[A-Za-z0-9_-]+
 - message_id: msg_[A-Za-z0-9_-]+
-- tool_call_id: tc_[A-Za-z0-9_-]+
+- tool_call_id: (tc_|call_|toolu_|tool_)[A-Za-z0-9_-]+
 - stream_id: str_[A-Za-z0-9_-]+
 - user_id_hash: uh_[A-Za-z0-9_-]+
 """
@@ -46,34 +46,43 @@ def generate_tool_call_id() -> str:
     return f"tc_{_generate_ulid()}"
 
 
-_TOOL_CALL_ID_PATTERN = re.compile(r"^(tc_|call_|toolu_)[A-Za-z0-9_-]+$")
+_TOOL_CALL_ID_PATTERN = re.compile(r"^(tc_|call_|toolu_|tool_)[A-Za-z0-9_-]+$")
 _SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def normalize_tool_call_id(raw_id: str | None) -> str:
+def normalize_tool_call_id(raw_id: str | None) -> tuple[str, str | None]:
     """Normalize a provider tool call ID into an AgentOne ToolCallId.
 
-    Our ToolCallId schema requires one of these prefixes: `tc_`, `call_`, `toolu_`.
+    Our ToolCallId schema requires one of these prefixes: `tc_`, `call_`, `toolu_`, `tool_`.
     Some providers (notably Gemini/Vertex) can emit UUID-like IDs without a prefix.
-    In those cases, we prefix the value with `tc_` (if it only contains safe chars).
+    Other providers (like Kimi) may use formats like `get_weather:0`.
+    In those cases, we sanitize and prefix the value with `tc_`.
+
+    Returns:
+        A tuple of (normalized_id, original_id) where original_id is the raw provider ID
+        for debugging purposes. original_id is None if raw_id was None/empty or already
+        matched the normalized format.
     """
     if raw_id is None:
-        return generate_tool_call_id()
+        return (generate_tool_call_id(), None)
 
     raw = str(raw_id).strip()
     if not raw:
-        return generate_tool_call_id()
+        return (generate_tool_call_id(), None)
 
+    # Already has valid prefix - no transformation needed
     if _TOOL_CALL_ID_PATTERN.match(raw):
-        return raw
+        return (raw, None)
 
+    # Safe chars only - just add prefix
     if _SAFE_ID_PATTERN.match(raw):
-        return f"tc_{raw}"
+        return (f"tc_{raw}", raw)
 
+    # Sanitize invalid chars (like colons in Kimi's format `get_weather:0`)
     sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", raw).strip("_")
     if not sanitized:
-        return generate_tool_call_id()
-    return f"tc_{sanitized}"
+        return (generate_tool_call_id(), raw)
+    return (f"tc_{sanitized}", raw)
 
 
 def generate_stream_id() -> str:

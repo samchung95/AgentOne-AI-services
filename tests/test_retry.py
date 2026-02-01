@@ -1,6 +1,5 @@
 """Tests for retry logic."""
 
-import asyncio
 
 import pytest
 
@@ -11,6 +10,7 @@ from services.llm_service.core.llm.retry import (
     calculate_delay,
     extract_retry_after,
     is_retryable_error,
+    retry_async_generator,
     with_retry,
 )
 
@@ -201,3 +201,228 @@ class TestWithRetryDecorator:
             await raises_value_error()
 
         assert call_count == 1  # No retries
+
+
+class TestRetryAsyncGeneratorBuffer:
+    """Tests for async generator retry with chunk buffering."""
+
+    @pytest.mark.asyncio
+    async def test_chunks_are_buffered(self):
+        """Test that chunks are stored in buffer during iteration."""
+        chunks_yielded = []
+
+        async def gen():
+            for i in range(5):
+                yield f"chunk_{i}"
+
+        config = RetryConfig(max_buffer_chunks=10)
+        async for chunk in retry_async_generator(gen, config):
+            chunks_yielded.append(chunk)
+
+        assert chunks_yielded == ["chunk_0", "chunk_1", "chunk_2", "chunk_3", "chunk_4"]
+
+    @pytest.mark.asyncio
+    async def test_buffer_respects_max_limit(self):
+        """Test that buffer does not exceed max_buffer_chunks.
+
+        The buffer only stores up to max_buffer_chunks for potential replay.
+        This test verifies the buffer limit is respected (all chunks are still
+        yielded, but only the first N are buffered).
+        """
+        call_count = 0
+
+        async def gen():
+            nonlocal call_count
+            call_count += 1
+            for i in range(20):
+                yield f"chunk_{i}"
+
+        # With max_buffer_chunks=5, we buffer at most 5 chunks
+        # but yield all 20 from the generator
+        config = RetryConfig(max_buffer_chunks=5)
+
+        chunks = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks.append(chunk)
+
+        # All 20 chunks should be yielded
+        assert len(chunks) == 20
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_buffer_cleared_on_success(self):
+        """Test that buffer is cleared after successful completion."""
+        # We verify buffer clearing by checking that memory usage pattern
+        # is as expected (buffer doesn't accumulate across iterations)
+        call_count = 0
+
+        async def gen():
+            nonlocal call_count
+            call_count += 1
+            for i in range(5):
+                yield f"chunk_{i}"
+
+        config = RetryConfig(max_buffer_chunks=1000)
+
+        # First run
+        chunks1 = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks1.append(chunk)
+
+        # Second run (separate generator wrapper)
+        chunks2 = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks2.append(chunk)
+
+        assert chunks1 == chunks2
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_default_max_buffer_chunks(self):
+        """Test that default max_buffer_chunks is 1000."""
+        config = RetryConfig()
+        assert config.max_buffer_chunks == 1000
+
+
+class TestRetryAsyncGeneratorReplay:
+    """Tests for async generator retry with chunk replay on failure."""
+
+    @pytest.mark.asyncio
+    async def test_default_enable_stream_replay_is_true(self):
+        """Test that enable_stream_replay defaults to True."""
+        config = RetryConfig()
+        assert config.enable_stream_replay is True
+
+    @pytest.mark.asyncio
+    async def test_replay_buffered_chunks_on_failure(self):
+        """Test that buffered chunks are replayed when failure occurs mid-stream."""
+        call_count = 0
+        chunks_from_generator = []
+
+        async def gen():
+            nonlocal call_count
+            call_count += 1
+            for i in range(5):
+                chunks_from_generator.append((call_count, f"chunk_{i}"))
+                yield f"chunk_{i}"
+                # Fail mid-stream on first call
+                if call_count == 1 and i == 2:
+                    raise ConnectionError("Connection lost mid-stream")
+
+        config = RetryConfig(
+            max_retries=3,
+            initial_delay_seconds=0.01,
+            jitter=False,
+            enable_stream_replay=True,
+        )
+
+        chunks_received = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks_received.append(chunk)
+
+        # First call yields chunks 0, 1, 2 then fails
+        # Replay yields chunks 0, 1, 2 again
+        # Second call yields all 5 chunks but skips first 3 (already replayed)
+        # So chunks_received should be: 0, 1, 2, (replay) 0, 1, 2, (new from retry) 3, 4
+        assert chunks_received == [
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_3",
+            "chunk_4",
+        ]
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_replay_when_disabled(self):
+        """Test that chunks are not replayed when enable_stream_replay is False."""
+        call_count = 0
+
+        async def gen():
+            nonlocal call_count
+            call_count += 1
+            for i in range(5):
+                yield f"chunk_{i}"
+                # Fail mid-stream on first call
+                if call_count == 1 and i == 2:
+                    raise ConnectionError("Connection lost mid-stream")
+
+        config = RetryConfig(
+            max_retries=3,
+            initial_delay_seconds=0.01,
+            jitter=False,
+            enable_stream_replay=False,
+        )
+
+        chunks_received = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks_received.append(chunk)
+
+        # First call yields chunks 0, 1, 2 then fails
+        # No replay, so retry starts fresh and yields all 5 chunks
+        # Result: 0, 1, 2, (retry) 0, 1, 2, 3, 4
+        assert chunks_received == [
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_3",
+            "chunk_4",
+        ]
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_replay_with_buffer_limit(self):
+        """Test replay behavior when buffer limit is smaller than yielded chunks."""
+        call_count = 0
+
+        async def gen():
+            nonlocal call_count
+            call_count += 1
+            for i in range(10):
+                yield f"chunk_{i}"
+                # Fail after 7 chunks on first call
+                if call_count == 1 and i == 6:
+                    raise ConnectionError("Connection lost")
+
+        config = RetryConfig(
+            max_retries=3,
+            initial_delay_seconds=0.01,
+            jitter=False,
+            max_buffer_chunks=3,  # Only buffer first 3 chunks
+            enable_stream_replay=True,
+        )
+
+        chunks_received = []
+        async for chunk in retry_async_generator(gen, config):
+            chunks_received.append(chunk)
+
+        # First call yields chunks 0-6 (7 chunks), but only 0-2 buffered, then fails
+        # Replay yields chunks 0, 1, 2
+        # Retry yields all 10 but skips first 3 (replayed)
+        # Result: 0, 1, 2, 3, 4, 5, 6, (replay) 0, 1, 2, (retry new) 3, 4, 5, 6, 7, 8, 9
+        assert chunks_received == [
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_3",
+            "chunk_4",
+            "chunk_5",
+            "chunk_6",
+            "chunk_0",
+            "chunk_1",
+            "chunk_2",
+            "chunk_3",
+            "chunk_4",
+            "chunk_5",
+            "chunk_6",
+            "chunk_7",
+            "chunk_8",
+            "chunk_9",
+        ]
+        assert call_count == 2

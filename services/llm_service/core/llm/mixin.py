@@ -19,7 +19,7 @@ from services.llm_service.core.llm.base import (
 )
 from shared.protocol.common import Usage
 from shared.protocol.tool_models import ToolCall
-from shared.validators.id_generators import generate_tool_call_id
+from shared.validators.id_generators import generate_tool_call_id, normalize_tool_call_id
 
 
 class OpenAICompatibleMixin:
@@ -82,6 +82,13 @@ class OpenAICompatibleMixin:
                         }
                     )
                 converted["tool_calls"] = tool_calls_converted
+                # For assistant messages with tool_calls, thinking-enabled models
+                # require reasoning_content to be present (even if empty)
+                converted["reasoning_content"] = msg.reasoning_content or ""
+
+            # Include reasoning_content for messages without tool_calls if present
+            elif msg.reasoning_content is not None:
+                converted["reasoning_content"] = msg.reasoning_content
 
             if msg.tool_call_id:
                 converted["tool_call_id"] = msg.tool_call_id
@@ -146,13 +153,18 @@ class OpenAICompatibleMixin:
             name = func.get("name", "")
             tool_def = tool_defs.get(name)
 
+            # Normalize tool call ID to handle different provider formats
+            raw_id = tc.get("id")
+            normalized_id, original_id = normalize_tool_call_id(raw_id)
+
             result.append(
                 ToolCall(
-                    tool_call_id=tc.get("id") or generate_tool_call_id(),
+                    tool_call_id=normalized_id,
                     name=name,
                     args=json.loads(func.get("arguments", "{}")),
                     audience=tool_def.audience if tool_def else "internal",
                     scopes=tool_def.scopes if tool_def else [],
+                    provider_id=original_id,
                 )
             )
 
@@ -173,6 +185,7 @@ class OpenAICompatibleMixin:
             Complete LLMResponse with aggregated content.
         """
         content_parts = []
+        reasoning_parts = []
         tool_calls_raw: list[dict[str, Any]] = []
         finish_reason = "stop"
         usage: Usage | None = None
@@ -180,6 +193,8 @@ class OpenAICompatibleMixin:
         async for chunk in stream_generator:
             if chunk.delta:
                 content_parts.append(chunk.delta)
+            if chunk.reasoning_content:
+                reasoning_parts.append(chunk.reasoning_content)
             if chunk.tool_calls:
                 tool_calls_raw = chunk.tool_calls
             if chunk.finish_reason:
@@ -195,6 +210,7 @@ class OpenAICompatibleMixin:
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
+            reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
         )
 
 

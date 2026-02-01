@@ -15,6 +15,12 @@ from typing import Any, ParamSpec, TypeVar
 
 import structlog
 
+from services.llm_service.core.config.constants import (
+    DEFAULT_ENABLE_STREAM_REPLAY,
+    DEFAULT_MAX_BUFFER_CHUNKS,
+    RETRYABLE_STATUS_CODES,
+)
+
 logger = structlog.get_logger(__name__)
 
 P = ParamSpec("P")
@@ -52,7 +58,7 @@ class RetryConfig:
     jitter: bool = True
     jitter_factor: float = 0.25
     strategy: RetryStrategy = RetryStrategy.EXPONENTIAL_BACKOFF
-    retryable_status_codes: set[int] = field(default_factory=lambda: {429, 500, 502, 503, 504})
+    retryable_status_codes: set[int] = field(default_factory=lambda: set(RETRYABLE_STATUS_CODES))
     retryable_exceptions: tuple[type[Exception], ...] = field(
         default_factory=lambda: (
             ConnectionError,
@@ -60,6 +66,8 @@ class RetryConfig:
             asyncio.TimeoutError,
         )
     )
+    max_buffer_chunks: int = DEFAULT_MAX_BUFFER_CHUNKS
+    enable_stream_replay: bool = DEFAULT_ENABLE_STREAM_REPLAY
 
 
 # Default configuration for rate limit handling
@@ -252,10 +260,15 @@ async def retry_async_generator[T](
     generator_factory: Callable[[], AsyncGenerator[T, None]],
     config: RetryConfig | None = None,
 ) -> AsyncGenerator[T, None]:
-    """Retry wrapper for async generators.
+    """Retry wrapper for async generators with chunk buffering and replay.
 
     Unlike regular functions, generators can fail mid-iteration.
-    This wrapper retries from the beginning on failure.
+    This wrapper buffers yielded chunks so they can be replayed on retry.
+
+    When enable_stream_replay is True (default), on a retryable failure:
+    1. Buffered chunks are yielded first (replay)
+    2. Then the generator is retried from the beginning
+    3. Only new chunks (after the buffer) are yielded from the retry
 
     Args:
         generator_factory: Function that creates the async generator.
@@ -265,17 +278,31 @@ async def retry_async_generator[T](
         Items from the generator.
 
     Note:
-        If the generator fails mid-iteration, all yielded items are lost
-        and the generator restarts from the beginning.
+        Chunks are buffered up to max_buffer_chunks for potential replay.
+        Buffer is cleared on successful completion.
     """
     config = config or DEFAULT_RETRY_CONFIG
     state = RetryState()
+    chunk_buffer: list[T] = []
+    replayed_count: int = 0  # Track how many chunks were replayed
 
     while True:
         try:
+            chunk_index = 0
             async for item in generator_factory():
+                # Skip chunks that were already yielded before failure
+                if chunk_index < replayed_count:
+                    chunk_index += 1
+                    continue
+
+                # Buffer the chunk if under limit
+                if len(chunk_buffer) < config.max_buffer_chunks:
+                    chunk_buffer.append(item)
                 yield item
-            return  # Successfully completed
+                chunk_index += 1
+            # Successfully completed - clear buffer
+            chunk_buffer.clear()
+            return
         except Exception as e:
             state.last_error = e
             state.attempt += 1
@@ -294,6 +321,7 @@ async def retry_async_generator[T](
                     attempts=state.attempt,
                     total_delay=state.total_delay,
                     error=str(e),
+                    buffered_chunks=len(chunk_buffer),
                 )
                 raise
 
@@ -310,7 +338,21 @@ async def retry_async_generator[T](
                 attempt=state.attempt,
                 max_retries=config.max_retries,
                 delay_seconds=round(delay, 2),
+                buffered_chunks=len(chunk_buffer),
+                replay_enabled=config.enable_stream_replay,
                 error=str(e)[:200],
             )
 
             await asyncio.sleep(delay)
+
+            # Replay buffered chunks if enabled
+            if config.enable_stream_replay and chunk_buffer:
+                logger.info(
+                    "replaying_buffered_chunks",
+                    chunk_count=len(chunk_buffer),
+                    attempt=state.attempt,
+                )
+                for buffered_item in chunk_buffer:
+                    yield buffered_item
+                # Track how many chunks were replayed so we skip them in retry
+                replayed_count = len(chunk_buffer)

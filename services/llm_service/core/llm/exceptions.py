@@ -127,3 +127,53 @@ class LLMRateLimitError(LLMError):
             retryable=True,
         )
         self.retry_after = retry_after
+
+
+class QueueFullError(LLMRateLimitError):
+    """Dispatcher queue is full - cannot accept more requests.
+
+    This error is raised when the request queue for a provider is full
+    and no more requests can be queued. Clients should retry after the
+    specified delay.
+    """
+
+    def __init__(self, provider: str, retry_after: float, queue_size: int):
+        super().__init__(provider=provider, retry_after=retry_after)
+        self.code = "QUEUE_FULL"
+        self.message = (
+            f"Request queue full for {provider} "
+            f"(queue_size={queue_size}). Retry after {retry_after}s"
+        )
+        self.details = {
+            "provider": provider,
+            "retry_after": retry_after,
+            "queue_size": queue_size,
+        }
+        self.queue_size = queue_size
+
+
+class CircuitOpenError(LLMError):
+    """Circuit breaker is open - provider is unhealthy.
+
+    This error is raised when the circuit breaker for a provider is open,
+    indicating the provider has been experiencing high failure rates.
+    Requests should be retried after the recovery timeout.
+    """
+
+    def __init__(self, provider: str, retry_after: float, failure_rate: float):
+        super().__init__(
+            message=(
+                f"Circuit breaker open for {provider} "
+                f"(failure_rate={failure_rate:.1%}). Retry after {retry_after}s"
+            ),
+            code="CIRCUIT_OPEN",
+            details={
+                "provider": provider,
+                "retry_after": retry_after,
+                "failure_rate": failure_rate,
+            },
+            retryable=True,
+        )
+        self.provider = provider
+        self.retry_after = retry_after
+        self.failure_rate = failure_rate

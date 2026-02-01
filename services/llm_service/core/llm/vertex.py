@@ -1,7 +1,8 @@
 """Google Vertex AI LLM client implementation using LangChain.
 
 Supports GenAI Platform gateway mode with Azure AD authentication via SPCredentials.
-Uses LangChain's ChatVertexAI for Vertex AI API calls.
+Uses LangChain's ChatGoogleGenerativeAI (from langchain-google-genai>=4.0.0) with
+vertexai=True for Vertex AI API calls.
 """
 
 import asyncio
@@ -13,8 +14,9 @@ from typing import Any
 
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 
+from services.llm_service.core.config.constants import ProviderID
 from services.llm_service.core.config.settings import Settings, get_settings
 from services.llm_service.core.llm.azure_token import SPCredentials
 from services.llm_service.core.llm.base import (
@@ -24,6 +26,11 @@ from services.llm_service.core.llm.base import (
     LLMResponse,
     LLMToolDefinition,
     to_langchain_content,
+)
+from services.llm_service.core.llm.credentials import CredentialProvider, GCPCredentialProvider
+from services.llm_service.core.llm.genai_platform import (
+    build_genai_headers,
+    resolve_genai_endpoint,
 )
 from shared.protocol.common import Usage
 from shared.protocol.tool_models import ToolCall
@@ -38,14 +45,27 @@ _GEMINI_FUNCTION_CALL_THOUGHT_SIGNATURES_KEY = "__gemini_function_call_thought_s
 
 
 class VertexAIClient(BaseLLMClient):
-    """Google Vertex AI LLM client using LangChain with GenAI Platform support."""
+    """Google Vertex AI LLM client using LangChain with GenAI Platform support.
+
+    Uses ChatGoogleGenerativeAI with vertexai=True for Vertex AI API calls.
+    Supports SPCredentials for Azure AD tokens when using GenAI Platform gateway.
+    """
 
     def __init__(self, settings: Settings | None = None):
         """Initialize Vertex AI client."""
         self._settings = settings or get_settings()
-        self._chat: ChatVertexAI | None = None
-        self._model_name = getattr(self._settings, "vertex_model", DEFAULT_VERTEX_MODEL)
+        self._client_instance: ChatGoogleGenerativeAI | None = None
+        self._model_name = self._settings.vertex_ai.model
         self._force_sync: bool = False
+        # Direct config attributes (set by from_model_config)
+        self._direct_project_id: str | None = None
+        self._direct_location: str = DEFAULT_VERTEX_LOCATION
+        self._direct_api_key: str | None = None
+        self._genai_platform_enabled: bool = False
+        self._genai_platform_base_url: str | None = None
+        self._genai_platform_path: str | None = None
+        self._genai_platform_user_id: str | None = None
+        self._genai_platform_project_name: str | None = None
 
     @classmethod
     def from_model_config(
@@ -63,7 +83,7 @@ class VertexAIClient(BaseLLMClient):
         """Create client from model configuration."""
         instance = cls.__new__(cls)
         instance._settings = None
-        instance._chat = None
+        instance._client_instance = None
         instance._model_name = model
         instance._direct_project_id = project_id
         instance._direct_location = location
@@ -76,73 +96,163 @@ class VertexAIClient(BaseLLMClient):
         instance._genai_platform_project_name = genai_platform_project_name
         return instance
 
-    def _ensure_client(self) -> ChatVertexAI:
-        """Ensure LangChain ChatVertexAI client is initialized."""
-        if self._chat is None:
-            if self._settings:
-                genai_enabled = getattr(self._settings, "genai_platform_enabled", False)
-                genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
-                genai_path = getattr(self._settings, "genai_platform_path", "stg/v1")
-                genai_user_id = getattr(self._settings, "genai_platform_user_id", None)
-                genai_project_name = getattr(self._settings, "genai_platform_project_name", None)
-                project_id = getattr(self._settings, "vertex_project_id", None)
-                location = getattr(self._settings, "vertex_location", DEFAULT_VERTEX_LOCATION)
-            else:
-                genai_enabled = getattr(self, "_genai_platform_enabled", False)
-                genai_base_url = getattr(self, "_genai_platform_base_url", None)
-                genai_path = getattr(self, "_genai_platform_path", "stg/v1")
-                genai_user_id = getattr(self, "_genai_platform_user_id", None)
-                genai_project_name = getattr(self, "_genai_platform_project_name", None)
-                project_id = getattr(self, "_direct_project_id", None)
-                location = getattr(self, "_direct_location", DEFAULT_VERTEX_LOCATION)
+    def _get_endpoint(self) -> str:
+        """Return the Vertex AI endpoint URL.
 
-            headers: dict[str, str] = {}
-            if genai_user_id:
-                headers["userid"] = genai_user_id
-            if genai_project_name:
-                headers["project-name"] = genai_project_name
+        Handles two modes:
+        - GenAI Platform: Constructs endpoint from base URL and path using resolve_genai_endpoint()
+        - Direct Vertex AI: Returns empty string (uses Google Cloud defaults)
 
-            if genai_enabled and genai_base_url:
-                path = genai_path.lstrip("/") if genai_path else "stg/v1"
-                endpoint = f"{genai_base_url.rstrip('/')}/{path}/vertexai"
+        Returns:
+            The Vertex AI endpoint URL, or empty string for direct mode.
+        """
+        if self._settings:
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_path = self._settings.genai_platform.path
+        else:
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+            genai_path = self._genai_platform_path
 
-                self._chat = ChatVertexAI(
-                    model_name=self._model_name,
-                    api_endpoint=endpoint,
-                    credentials=SPCredentials(),
-                    api_transport="rest",
-                    project="genai-platform",
-                    additional_headers=headers if headers else None,
-                )
-                self._force_sync = True
+        if genai_enabled and genai_base_url:
+            return resolve_genai_endpoint(
+                base_url=genai_base_url,
+                path=genai_path,
+                provider=ProviderID.VERTEX_AI,
+            )
 
-                logger.info(
-                    "vertex_client_initialized_genai_platform",
-                    endpoint=endpoint,
-                    model=self._model_name,
-                )
+        return ""
 
-            elif project_id:
-                self._chat = ChatVertexAI(
-                    model_name=self._model_name,
-                    project=project_id,
-                    location=location,
-                )
-                self._force_sync = False
+    def _get_credential_provider(self) -> CredentialProvider | None:
+        """Return the credential provider for Vertex AI.
 
-                logger.info(
-                    "vertex_client_initialized_vertex_ai",
-                    project_id=project_id,
-                    location=location,
-                    model=self._model_name,
-                )
-            else:
-                raise RuntimeError(
-                    "Vertex AI requires either: GenAI Platform config (GENAI_PLATFORM_ENABLED=true) "
-                    "or VERTEX_PROJECT_ID for direct Vertex AI access"
-                )
+        Handles two modes:
+        - GenAI Platform: Returns None (uses SPCredentials directly in _create_client_instance)
+        - Direct Vertex AI: Returns GCPCredentialProvider for ADC
 
-        return self._chat
+        Note: For GenAI Platform mode, SPCredentials is used directly in _create_client_instance
+        because it implements the Google Credentials interface required by ChatGoogleGenerativeAI.
+
+        Returns:
+            GCPCredentialProvider for direct mode, or None for GenAI Platform mode.
+        """
+        if self._settings:
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+        else:
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+
+        # GenAI Platform mode uses SPCredentials directly
+        if genai_enabled and genai_base_url:
+            return None
+
+        # Direct Vertex AI mode uses GCP ADC
+        return GCPCredentialProvider()
+
+    def _create_client_instance(
+        self, credentials: dict[str, Any], endpoint: str
+    ) -> ChatGoogleGenerativeAI:
+        """Create the ChatGoogleGenerativeAI client instance.
+
+        Args:
+            credentials: Dictionary with 'credentials' key for GCP credentials (direct mode),
+                        or empty dict for GenAI Platform mode (uses SPCredentials).
+            endpoint: The Vertex AI endpoint URL (GenAI Platform) or empty string (direct).
+
+        Returns:
+            Configured ChatGoogleGenerativeAI client.
+        """
+        if self._settings:
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_user_id = self._settings.genai_platform.user_id
+            genai_project_name = self._settings.genai_platform.project_name
+            project_id = self._settings.vertex_ai.project_id
+            location = self._settings.vertex_ai.location
+        else:
+            genai_enabled = self._genai_platform_enabled
+            genai_base_url = self._genai_platform_base_url
+            genai_user_id = self._genai_platform_user_id
+            genai_project_name = self._genai_platform_project_name
+            project_id = self._direct_project_id
+            location = self._direct_location
+
+        # Build headers for GenAI Platform using shared module
+        headers = build_genai_headers(
+            user_id=genai_user_id,
+            project_name=genai_project_name,
+        )
+
+        if genai_enabled and genai_base_url:
+            # GenAI Platform mode - use SPCredentials (Azure AD token adapter)
+            client = ChatGoogleGenerativeAI(
+                model=self._model_name,
+                vertexai=True,
+                base_url=endpoint,
+                credentials=SPCredentials(),
+                project="genai-platform",
+                location=location,
+                additional_headers=headers if headers else None,
+            )
+            # Keep sync fallback for GenAI Platform mode until native async is verified
+            # with custom endpoints. The langchain-google-genai SDK may have issues
+            # with custom base_url in async mode.
+            self._force_sync = True
+
+            logger.info(
+                "vertex_client_initialized_genai_platform",
+                endpoint=endpoint,
+                model=self._model_name,
+            )
+            return client
+
+        elif project_id:
+            # Direct Vertex AI mode - uses GCP ADC from credentials dict
+            client = ChatGoogleGenerativeAI(
+                model=self._model_name,
+                vertexai=True,
+                project=project_id,
+                location=location,
+            )
+            # Direct Vertex AI mode supports native async streaming
+            self._force_sync = False
+
+            logger.info(
+                "vertex_client_initialized_vertex_ai",
+                project_id=project_id,
+                location=location,
+                model=self._model_name,
+            )
+            return client
+
+        else:
+            raise RuntimeError(
+                "Vertex AI requires either: GenAI Platform config (GENAI_PLATFORM_ENABLED=true) "
+                "or VERTEX_PROJECT_ID for direct Vertex AI access"
+            )
+
+    def _initialize_client(self) -> ChatGoogleGenerativeAI:
+        """Initialize the Vertex AI client.
+
+        Overrides the base template method because Vertex AI has two distinct
+        credential modes that require different handling:
+        - GenAI Platform: Uses SPCredentials (no CredentialProvider)
+        - Direct Vertex AI: Uses GCPCredentialProvider
+
+        Returns:
+            The initialized ChatGoogleGenerativeAI client.
+        """
+        credential_provider = self._get_credential_provider()
+        if credential_provider is not None:
+            credentials = credential_provider.get_credentials()
+        else:
+            # GenAI Platform mode - SPCredentials used directly in _create_client_instance
+            credentials = {}
+
+        endpoint = self._get_endpoint()
+        return self._create_client_instance(credentials, endpoint)
 
     def _convert_to_langchain_messages(
         self,
@@ -180,8 +290,10 @@ class VertexAIClient(BaseLLMClient):
                                 args = json.loads(args)
                             except json.JSONDecodeError:
                                 args = {}
-                        tool_call_id = tc.get("id") or tc.get("tool_call_id") or generate_tool_call_id()
-                        tool_call_id = normalize_tool_call_id(tool_call_id if isinstance(tool_call_id, str) else None)
+                        raw_tc_id = tc.get("id") or tc.get("tool_call_id") or generate_tool_call_id()
+                        tool_call_id, _ = normalize_tool_call_id(
+                            raw_tc_id if isinstance(raw_tc_id, str) else None
+                        )
 
                         thought_signature = tc.get("thought_signature")
                         if not thought_signature:
@@ -308,8 +420,8 @@ class VertexAIClient(BaseLLMClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[LLMChunk, None]:
-        """Generate a streaming response using LangChain ChatVertexAI."""
-        chat = self._ensure_client()
+        """Generate a streaming response using LangChain ChatGoogleGenerativeAI."""
+        chat = self.client
 
         lc_messages = self._convert_to_langchain_messages(messages, system_prompt)
 
@@ -348,7 +460,8 @@ class VertexAIClient(BaseLLMClient):
                             sig_str = sig
                         else:
                             continue
-                        gemini_tool_call_signatures[normalize_tool_call_id(raw_id)] = sig_str
+                        normalized_id, _ = normalize_tool_call_id(raw_id)
+                        gemini_tool_call_signatures[normalized_id] = sig_str
 
             if chunk.content:
                 text = self._langchain_content_to_text(chunk.content)
@@ -382,7 +495,8 @@ class VertexAIClient(BaseLLMClient):
 
                     if tc_chunk.get("id"):
                         raw_id = tc_chunk["id"]
-                        tool_calls[idx]["id"] = normalize_tool_call_id(raw_id if isinstance(raw_id, str) else None)
+                        normalized_id, _ = normalize_tool_call_id(raw_id if isinstance(raw_id, str) else None)
+                        tool_calls[idx]["id"] = normalized_id
                     if tc_chunk.get("name"):
                         tool_calls[idx]["function"]["name"] = tc_chunk["name"]
                     if tc_chunk.get("args"):
@@ -418,8 +532,8 @@ class VertexAIClient(BaseLLMClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        """Generate a complete response using LangChain ChatVertexAI."""
-        chat = self._ensure_client()
+        """Generate a complete response using LangChain ChatGoogleGenerativeAI."""
+        chat = self.client
 
         lc_messages = self._convert_to_langchain_messages(messages, system_prompt)
 
@@ -452,7 +566,8 @@ class VertexAIClient(BaseLLMClient):
                         sig_str = sig
                     else:
                         continue
-                    gemini_tool_call_signatures[normalize_tool_call_id(raw_id)] = sig_str
+                    normalized_sig_id, _ = normalize_tool_call_id(raw_id)
+                    gemini_tool_call_signatures[normalized_sig_id] = sig_str
 
         tool_calls_result: list[ToolCall] = []
         if hasattr(response, "tool_calls") and response.tool_calls:
@@ -460,13 +575,15 @@ class VertexAIClient(BaseLLMClient):
             for tc in response.tool_calls:
                 name = tc.get("name", "")
                 tool_def = tool_defs.get(name)
-                tool_call_id = normalize_tool_call_id(tc.get("id") if isinstance(tc.get("id"), str) else None)
+                raw_tc_id = tc.get("id") if isinstance(tc.get("id"), str) else None
+                tool_call_id, original_id = normalize_tool_call_id(raw_tc_id)
                 extensions: dict[str, Any] | None = None
                 if tool_call_id in gemini_tool_call_signatures:
                     extensions = {"thought_signature": gemini_tool_call_signatures[tool_call_id]}
                 tool_calls_result.append(
                     ToolCall(
                         tool_call_id=tool_call_id,
+                        provider_id=original_id,
                         name=name,
                         args=tc.get("args", {}),
                         audience=tool_def.audience if tool_def else "internal",
@@ -495,5 +612,5 @@ class VertexAIClient(BaseLLMClient):
 
     async def close(self) -> None:
         """Close the client."""
-        self._chat = None
+        self._client_instance = None
         logger.info("vertex_client_closed")

@@ -28,14 +28,47 @@ class RemoteLLMClient(BaseLLMClient):
         self._use_case = use_case
         self._model = model
         self._timeout_seconds = timeout_seconds
-        self._client = client
+        self._external_client = client
+        self._client_instance: httpx.AsyncClient | None = None
         self._owns_client = client is None
 
-    def _ensure_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout_seconds)
-            self._owns_client = True
-        return self._client
+    def _get_endpoint(self) -> str:
+        """Return the configured remote service base URL.
+
+        Returns:
+            The base URL for the remote LLM service.
+        """
+        return self._base_url
+
+    def _create_client_instance(
+        self, credentials: dict[str, Any], endpoint: str
+    ) -> httpx.AsyncClient:
+        """Create the httpx.AsyncClient instance.
+
+        Args:
+            credentials: Not used for remote client (authentication handled by remote).
+            endpoint: Not used directly here (stored in _base_url).
+
+        Returns:
+            Configured httpx.AsyncClient.
+        """
+        return httpx.AsyncClient(timeout=self._timeout_seconds)
+
+    def _initialize_client(self) -> httpx.AsyncClient:
+        """Initialize the HTTP client.
+
+        If an external client was provided at construction, use that.
+        Otherwise, create a new httpx.AsyncClient with configured timeout.
+
+        Returns:
+            The httpx.AsyncClient instance.
+        """
+        if self._external_client is not None:
+            self._owns_client = False
+            return self._external_client
+
+        self._owns_client = True
+        return self._create_client_instance({}, self._base_url)
 
     @staticmethod
     def _serialize_messages(messages: list[LLMMessage]) -> list[dict[str, Any]]:
@@ -87,7 +120,7 @@ class RemoteLLMClient(BaseLLMClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[LLMChunk, None]:
-        client = self._ensure_client()
+        http_client = self.client
 
         payload: dict[str, Any] = {
             "use_case": self._use_case,
@@ -100,7 +133,7 @@ class RemoteLLMClient(BaseLLMClient):
         }
 
         url = f"{self._base_url}/v1/generate-stream"
-        async with client.stream("POST", url, json=payload) as response:
+        async with http_client.stream("POST", url, json=payload) as response:
             if response.is_error:
                 body = await response.aread()
                 detail = body.decode("utf-8", errors="replace")
@@ -133,7 +166,7 @@ class RemoteLLMClient(BaseLLMClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        client = self._ensure_client()
+        http_client = self.client
 
         payload: dict[str, Any] = {
             "use_case": self._use_case,
@@ -146,7 +179,7 @@ class RemoteLLMClient(BaseLLMClient):
         }
 
         url = f"{self._base_url}/v1/generate"
-        response = await client.post(url, json=payload)
+        response = await http_client.post(url, json=payload)
         if response.is_error:
             detail = response.text
             raise httpx.HTTPStatusError(
@@ -167,6 +200,6 @@ class RemoteLLMClient(BaseLLMClient):
         )
 
     async def close(self) -> None:
-        if self._client and self._owns_client:
-            await self._client.aclose()
-        self._client = None
+        if self._client_instance and self._owns_client:
+            await self._client_instance.aclose()
+        self._client_instance = None

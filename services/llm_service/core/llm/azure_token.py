@@ -5,7 +5,7 @@ Provides Azure AD token management for:
 2. Vertex AI via GenAI Platform gateway (using SPCredentials adapter)
 
 SPCredentials adapts Azure AD tokens to the google.auth.credentials.Credentials
-interface required by ChatVertexAI.
+interface required by ChatGoogleGenerativeAI (from langchain-google-genai).
 """
 
 from __future__ import annotations
@@ -238,7 +238,7 @@ class SPCredentials(GoogleCredentials):
 
     This class properly inherits from google.auth.credentials.Credentials,
     adapting Azure AD tokens (via GenAIToken) to the interface required by
-    ChatVertexAI and other Google Cloud clients.
+    ChatGoogleGenerativeAI and other Google Cloud clients.
 
     Use Case:
     - GenAI Platform mode: Routes Vertex AI requests through company's Azure
@@ -246,7 +246,7 @@ class SPCredentials(GoogleCredentials):
       Google Cloud ADC.
 
     NOTE: This is ONLY for GenAI Platform mode (company gateway).
-    Standard Vertex AI uses Google Cloud ADC via ChatVertexAI defaults.
+    Standard Vertex AI uses Google Cloud ADC via ChatGoogleGenerativeAI defaults.
     """
 
     def __init__(self, scope: str = COGNITIVE_SERVICES_SCOPE) -> None:

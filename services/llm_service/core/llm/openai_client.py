@@ -13,8 +13,8 @@ from services.llm_service.core.llm.base import (
     LLMMessage,
     LLMResponse,
     LLMToolDefinition,
-    to_langchain_content,
 )
+from services.llm_service.core.llm.credentials import APIKeyCredentialProvider, CredentialProvider
 from services.llm_service.core.llm.mixin import OpenAICompatibleMixin, StreamingToolCallAggregator
 from services.llm_service.core.llm.retry import DEFAULT_RETRY_CONFIG, with_retry
 from shared.protocol.common import Usage
@@ -32,8 +32,10 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
             settings: Application settings. Uses get_settings() if not provided.
         """
         self._settings = settings or get_settings()
-        self._client: AsyncOpenAI | None = None
-        self._model_name = self._settings.openai_model
+        self._client_instance: AsyncOpenAI | None = None
+        self._model_name = self._settings.openai.model
+        self._direct_api_key: str | None = None
+        self._direct_base_url: str | None = None
 
     @classmethod
     def from_model_config(
@@ -54,31 +56,58 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
         """
         instance = cls.__new__(cls)
         instance._settings = None
-        instance._client = None
+        instance._client_instance = None
         instance._model_name = model
         instance._direct_api_key = api_key
         instance._direct_base_url = base_url
         return instance
 
-    def _ensure_client(self) -> AsyncOpenAI:
-        """Ensure the async client is initialized."""
-        if self._client is None:
-            if self._settings:
-                api_key = self._settings.openai_api_key
-                base_url = self._settings.openai_base_url
-            else:
-                api_key = getattr(self, "_direct_api_key", "")
-                base_url = getattr(self, "_direct_base_url", None)
+    def _get_endpoint(self) -> str:
+        """Return the OpenAI API endpoint URL.
 
-            self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        Returns:
+            The base URL for OpenAI API, or empty string for default.
+        """
+        if self._settings:
+            return self._settings.openai.base_url or ""
+        return self._direct_base_url or ""
 
-            logger.info(
-                "openai_client_initialized",
-                model=self._model_name,
-                base_url=base_url or "default",
-            )
+    def _get_credential_provider(self) -> CredentialProvider:
+        """Return the credential provider for OpenAI.
 
-        return self._client
+        Returns:
+            APIKeyCredentialProvider with the configured API key.
+        """
+        if self._settings:
+            api_key = self._settings.openai.api_key or ""
+        else:
+            api_key = self._direct_api_key or ""
+        return APIKeyCredentialProvider(api_key)
+
+    def _create_client_instance(
+        self, credentials: dict[str, Any], endpoint: str
+    ) -> AsyncOpenAI:
+        """Create the AsyncOpenAI client instance.
+
+        Args:
+            credentials: Dictionary with 'api_key' from credential provider.
+            endpoint: The API endpoint URL (empty string for default).
+
+        Returns:
+            Configured AsyncOpenAI client.
+        """
+        api_key = credentials.get("api_key", "")
+        base_url = endpoint if endpoint else None
+
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+        logger.info(
+            "openai_client_initialized",
+            model=self._model_name,
+            base_url=base_url or "default",
+        )
+
+        return client
 
     async def generate_stream(
         self,
@@ -89,7 +118,7 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
         max_tokens: int | None = None,
     ) -> AsyncGenerator[LLMChunk, None]:
         """Generate a streaming response from OpenAI."""
-        client = self._ensure_client()
+        client = self.client
 
         # Convert messages to OpenAI format
         openai_messages = self._convert_messages(messages, system_prompt)
@@ -171,7 +200,7 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
 
     async def close(self) -> None:
         """Close the client."""
-        if self._client:
-            await self._client.close()
-            self._client = None
+        if self._client_instance:
+            await self._client_instance.close()
+            self._client_instance = None
             logger.info("openai_client_closed")
