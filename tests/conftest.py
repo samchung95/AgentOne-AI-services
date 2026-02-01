@@ -23,12 +23,14 @@ import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from services.llm_service.core.llm.base import LLMResponse
 
 # Set test environment before importing settings
 os.environ.setdefault("CONFIG_PROFILE", "openrouter")
@@ -97,25 +99,56 @@ def _get_mock_tool_call_response() -> dict[str, Any]:
 # =============================================================================
 
 
-def _build_mock_llm_response(response_data: dict[str, Any]) -> "MagicMock":
-    """Build a mock LLMResponse from fixture data."""
+def _build_mock_llm_response(
+    response_data: dict[str, Any], tools: list[Any] | None = None
+) -> "LLMResponse":
+    """Build a mock LLMResponse from fixture data.
+
+    Args:
+        response_data: OpenAI-format response dict from fixture file.
+        tools: Optional list of LLMToolDefinition objects for audience/scopes.
+
+    Returns:
+        A properly constructed LLMResponse object.
+    """
+    import json
+
     from services.llm_service.core.llm.base import LLMResponse
     from shared.protocol.common import Usage
     from shared.protocol.tool_models import ToolCall
+    from shared.validators.id_generators import normalize_tool_call_id
 
     choice = response_data["choices"][0]
     message = choice["message"]
     usage_data = response_data.get("usage", {})
 
+    # Build tool lookup from provided tools for audience/scopes
+    tool_lookup: dict[str, Any] = {}
+    if tools:
+        for tool in tools:
+            tool_lookup[tool.name] = tool
+
     tool_calls = []
     if message.get("tool_calls"):
         for tc in message["tool_calls"]:
+            func_name = tc["function"]["name"]
+            tool_def = tool_lookup.get(func_name)
+
+            # Parse arguments from JSON string
+            args_str = tc["function"]["arguments"]
+            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+
+            # Normalize the tool call ID
+            normalized_id, original_id = normalize_tool_call_id(tc["id"])
+
             tool_calls.append(
                 ToolCall(
-                    id=tc["id"],
-                    name=tc["function"]["name"],
-                    arguments=tc["function"]["arguments"],
-                    type=tc["type"],
+                    tool_call_id=normalized_id,
+                    name=func_name,
+                    args=args,
+                    audience=tool_def.audience if tool_def else "default",
+                    scopes=tool_def.scopes if tool_def else ["default.read"],
+                    provider_id=original_id,
                 )
             )
 
@@ -124,9 +157,10 @@ def _build_mock_llm_response(response_data: dict[str, Any]) -> "MagicMock":
         tool_calls=tool_calls,
         finish_reason=choice.get("finish_reason", "stop"),
         usage=Usage(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
+            input_tokens=usage_data.get("prompt_tokens", 0),
+            output_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
+            model_name=response_data.get("model", "mock-model"),
         ),
     )
 
@@ -147,9 +181,10 @@ async def _mock_generate_stream(
             delta=delta.get("content", ""),
             finish_reason=choice.get("finish_reason"),
             usage=Usage(
-                prompt_tokens=usage_data.get("prompt_tokens", 0),
-                completion_tokens=usage_data.get("completion_tokens", 0),
+                input_tokens=usage_data.get("prompt_tokens", 0),
+                output_tokens=usage_data.get("completion_tokens", 0),
                 total_tokens=usage_data.get("total_tokens", 0),
+                model_name=chunk_data.get("model", "mock-model"),
             )
             if usage_data
             else None,
@@ -185,7 +220,7 @@ def _create_mock_client_class(client_name: str) -> type:
             # Check if tools are provided to return tool call response
             tools = kwargs.get("tools") or (args[1] if len(args) > 1 else None)
             if tools:
-                return _build_mock_llm_response(_get_mock_tool_call_response())
+                return _build_mock_llm_response(_get_mock_tool_call_response(), tools)
             return _build_mock_llm_response(_get_mock_completion_response())
 
         async def generate_stream(
