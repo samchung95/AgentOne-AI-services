@@ -16,6 +16,7 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from services.llm_service.core.config.constants import ProviderID
 from services.llm_service.core.config.settings import Settings, get_settings
 from services.llm_service.core.llm.azure_token import SPCredentials
 from services.llm_service.core.llm.base import (
@@ -27,6 +28,10 @@ from services.llm_service.core.llm.base import (
     to_langchain_content,
 )
 from services.llm_service.core.llm.credentials import CredentialProvider, GCPCredentialProvider
+from services.llm_service.core.llm.genai_platform import (
+    build_genai_headers,
+    resolve_genai_endpoint,
+)
 from shared.protocol.common import Usage
 from shared.protocol.tool_models import ToolCall
 from shared.validators.id_generators import generate_tool_call_id, normalize_tool_call_id
@@ -95,7 +100,7 @@ class VertexAIClient(BaseLLMClient):
         """Return the Vertex AI endpoint URL.
 
         Handles two modes:
-        - GenAI Platform: Constructs endpoint from base URL and path with /vertexai suffix
+        - GenAI Platform: Constructs endpoint from base URL and path using resolve_genai_endpoint()
         - Direct Vertex AI: Returns empty string (uses Google Cloud defaults)
 
         Returns:
@@ -104,15 +109,18 @@ class VertexAIClient(BaseLLMClient):
         if self._settings:
             genai_enabled = getattr(self._settings, "genai_platform_enabled", False)
             genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
-            genai_path = getattr(self._settings, "genai_platform_path", "stg/v1")
+            genai_path = getattr(self._settings, "genai_platform_path", None)
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url
             genai_path = self._genai_platform_path
 
         if genai_enabled and genai_base_url:
-            path = genai_path.lstrip("/") if genai_path else "stg/v1"
-            return f"{genai_base_url.rstrip('/')}/{path}/vertexai"
+            return resolve_genai_endpoint(
+                base_url=genai_base_url,
+                path=genai_path,
+                provider=ProviderID.VERTEX_AI,
+            )
 
         return ""
 
@@ -171,12 +179,11 @@ class VertexAIClient(BaseLLMClient):
             project_id = self._direct_project_id
             location = self._direct_location
 
-        # Build headers for GenAI Platform
-        headers: dict[str, str] = {}
-        if genai_user_id:
-            headers["userid"] = genai_user_id
-        if genai_project_name:
-            headers["project-name"] = genai_project_name
+        # Build headers for GenAI Platform using shared module
+        headers = build_genai_headers(
+            user_id=genai_user_id,
+            project_name=genai_project_name,
+        )
 
         if genai_enabled and genai_base_url:
             # GenAI Platform mode - use SPCredentials (Azure AD token adapter)
