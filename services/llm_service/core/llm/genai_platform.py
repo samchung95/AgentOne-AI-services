@@ -4,7 +4,15 @@ Provides shared functionality for Azure and Vertex AI clients when using
 the GenAI Platform gateway.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from services.llm_service.core.config.constants import ProviderID
+from services.llm_service.core.llm.exceptions import ConfigurationError
+
+if TYPE_CHECKING:
+    from services.llm_service.core.config.settings import Settings
 
 # =============================================================================
 # Default Configuration
@@ -102,3 +110,50 @@ def build_genai_headers(
         headers["project-name"] = project_name
 
     return headers
+
+
+# =============================================================================
+# Configuration Validation
+# =============================================================================
+
+
+def validate_genai_config(settings: Settings) -> None:
+    """Validate GenAI Platform configuration when enabled.
+
+    Checks that all required fields are set when GenAI Platform is enabled.
+    This should be called at application startup to fail fast on
+    misconfiguration rather than at first request time.
+
+    Args:
+        settings: Application settings object to validate.
+
+    Raises:
+        ConfigurationError: If GenAI Platform is enabled but required
+            fields are missing. The error includes a list of missing fields.
+
+    Example:
+        >>> from services.llm_service.core.config.settings import get_settings
+        >>> validate_genai_config(get_settings())  # raises if misconfigured
+    """
+    # Skip validation if GenAI Platform is not enabled
+    if not settings.genai_platform_enabled:
+        return
+
+    missing_fields: list[str] = []
+
+    # Check required fields when GenAI Platform is enabled
+    if not settings.genai_platform_base_url:
+        missing_fields.append("GENAI_PLATFORM_BASE_URL")
+
+    if not settings.genai_platform_user_id:
+        missing_fields.append("GENAI_PLATFORM_USER_ID")
+
+    if not settings.genai_platform_project_name:
+        missing_fields.append("GENAI_PLATFORM_PROJECT_NAME")
+
+    if missing_fields:
+        raise ConfigurationError(
+            f"GenAI Platform is enabled but missing required configuration: "
+            f"{', '.join(missing_fields)}",
+            details={"missing_fields": missing_fields},
+        )

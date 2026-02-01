@@ -1,10 +1,16 @@
 """Tests for GenAI Platform module."""
 
+from unittest.mock import MagicMock
+
+import pytest
+
 from services.llm_service.core.config.constants import ProviderID
+from services.llm_service.core.llm.exceptions import ConfigurationError
 from services.llm_service.core.llm.genai_platform import (
     DEFAULT_GENAI_PATH,
     build_genai_headers,
     resolve_genai_endpoint,
+    validate_genai_config,
 )
 
 
@@ -210,3 +216,124 @@ class TestResolveGenaiEndpoint:
         )
 
         assert endpoint == f"https://genai.example.com/{DEFAULT_GENAI_PATH}/vertexai"
+
+
+class TestValidateGenaiConfig:
+    """Tests for validate_genai_config function."""
+
+    def test_skips_validation_when_disabled(self):
+        """Test that validation is skipped when GenAI Platform is disabled."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = False
+
+        # Should not raise even with missing fields
+        validate_genai_config(settings)
+
+    def test_valid_config_passes_validation(self):
+        """Test that valid config with all required fields passes."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = "https://genai.example.com"
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = "my-project"
+
+        # Should not raise
+        validate_genai_config(settings)
+
+    def test_raises_when_base_url_missing(self):
+        """Test that ConfigurationError is raised when base_url is missing."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = None
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = "my-project"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert "GENAI_PLATFORM_BASE_URL" in str(exc_info.value)
+        assert exc_info.value.details["missing_fields"] == ["GENAI_PLATFORM_BASE_URL"]
+
+    def test_raises_when_user_id_missing(self):
+        """Test that ConfigurationError is raised when user_id is missing."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = "https://genai.example.com"
+        settings.genai_platform_user_id = None
+        settings.genai_platform_project_name = "my-project"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert "GENAI_PLATFORM_USER_ID" in str(exc_info.value)
+        assert exc_info.value.details["missing_fields"] == ["GENAI_PLATFORM_USER_ID"]
+
+    def test_raises_when_project_name_missing(self):
+        """Test that ConfigurationError is raised when project_name is missing."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = "https://genai.example.com"
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = None
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert "GENAI_PLATFORM_PROJECT_NAME" in str(exc_info.value)
+        assert exc_info.value.details["missing_fields"] == ["GENAI_PLATFORM_PROJECT_NAME"]
+
+    def test_raises_with_all_missing_fields(self):
+        """Test that all missing fields are listed when multiple are missing."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = None
+        settings.genai_platform_user_id = None
+        settings.genai_platform_project_name = None
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        error = exc_info.value
+        assert "GENAI_PLATFORM_BASE_URL" in str(error)
+        assert "GENAI_PLATFORM_USER_ID" in str(error)
+        assert "GENAI_PLATFORM_PROJECT_NAME" in str(error)
+        assert len(error.details["missing_fields"]) == 3
+
+    def test_treats_empty_string_as_missing(self):
+        """Test that empty strings are treated as missing values."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = ""
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = "my-project"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert "GENAI_PLATFORM_BASE_URL" in str(exc_info.value)
+
+    def test_error_has_correct_code(self):
+        """Test that the raised error has CONFIGURATION_ERROR code."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = None
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = "my-project"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert exc_info.value.code == "CONFIGURATION_ERROR"
+
+    def test_error_is_not_retryable(self):
+        """Test that ConfigurationError is not retryable."""
+        settings = MagicMock()
+        settings.genai_platform_enabled = True
+        settings.genai_platform_base_url = None
+        settings.genai_platform_user_id = "user123"
+        settings.genai_platform_project_name = "my-project"
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            validate_genai_config(settings)
+
+        assert exc_info.value.retryable is False
