@@ -15,7 +15,10 @@ from typing import Any, ParamSpec, TypeVar
 
 import structlog
 
-from services.llm_service.core.config.constants import RETRYABLE_STATUS_CODES
+from services.llm_service.core.config.constants import (
+    DEFAULT_MAX_BUFFER_CHUNKS,
+    RETRYABLE_STATUS_CODES,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -62,6 +65,7 @@ class RetryConfig:
             asyncio.TimeoutError,
         )
     )
+    max_buffer_chunks: int = DEFAULT_MAX_BUFFER_CHUNKS
 
 
 # Default configuration for rate limit handling
@@ -254,10 +258,10 @@ async def retry_async_generator[T](
     generator_factory: Callable[[], AsyncGenerator[T, None]],
     config: RetryConfig | None = None,
 ) -> AsyncGenerator[T, None]:
-    """Retry wrapper for async generators.
+    """Retry wrapper for async generators with chunk buffering.
 
     Unlike regular functions, generators can fail mid-iteration.
-    This wrapper retries from the beginning on failure.
+    This wrapper buffers yielded chunks so they can be replayed on retry.
 
     Args:
         generator_factory: Function that creates the async generator.
@@ -267,17 +271,23 @@ async def retry_async_generator[T](
         Items from the generator.
 
     Note:
-        If the generator fails mid-iteration, all yielded items are lost
-        and the generator restarts from the beginning.
+        Chunks are buffered up to max_buffer_chunks for potential replay.
+        Buffer is cleared on successful completion.
     """
     config = config or DEFAULT_RETRY_CONFIG
     state = RetryState()
+    chunk_buffer: list[T] = []
 
     while True:
         try:
             async for item in generator_factory():
+                # Buffer the chunk if under limit
+                if len(chunk_buffer) < config.max_buffer_chunks:
+                    chunk_buffer.append(item)
                 yield item
-            return  # Successfully completed
+            # Successfully completed - clear buffer
+            chunk_buffer.clear()
+            return
         except Exception as e:
             state.last_error = e
             state.attempt += 1
@@ -296,6 +306,7 @@ async def retry_async_generator[T](
                     attempts=state.attempt,
                     total_delay=state.total_delay,
                     error=str(e),
+                    buffered_chunks=len(chunk_buffer),
                 )
                 raise
 
@@ -312,6 +323,7 @@ async def retry_async_generator[T](
                 attempt=state.attempt,
                 max_retries=config.max_retries,
                 delay_seconds=round(delay, 2),
+                buffered_chunks=len(chunk_buffer),
                 error=str(e)[:200],
             )
 

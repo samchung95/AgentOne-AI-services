@@ -100,6 +100,15 @@ CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS: Final[float] = 30.0
 TOKEN_REFRESH_THRESHOLD_SECONDS: Final[int] = 600  # 10 minutes
 
 # =============================================================================
+# Streaming Retry Configuration
+# =============================================================================
+
+#: Maximum number of chunks to buffer for streaming retry/replay
+#: Allows replaying buffered chunks on mid-stream failures
+#: Valid range: 100-10000
+DEFAULT_MAX_BUFFER_CHUNKS: Final[int] = 1000
+
+# =============================================================================
 # Timeout Configuration
 # =============================================================================
 
