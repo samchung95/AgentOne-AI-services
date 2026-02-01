@@ -1,0 +1,174 @@
+# Test Profile Configuration
+# Covers all providers and deployment modes for integration testing
+#
+# Set CONFIG_PROFILE=test to use this configuration.
+#
+# Required environment variables (fill in before running tests):
+#
+# OpenRouter:
+#   OPENROUTER_API_KEY=sk-or-...
+#
+# OpenAI Direct:
+#   OPENAI_API_KEY=sk-...
+#
+# Azure OpenAI (Direct):
+#   AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+#   AZURE_OPENAI_API_KEY=...  (or use DefaultAzureCredential)
+#
+# Azure OpenAI (GenAI Platform):
+#   GENAI_PLATFORM_ENABLED=true
+#   GENAI_PLATFORM_BASE_URL=https://genai.yourcompany.com
+#   GENAI_PLATFORM_PATH=stg/v1
+#   GENAI_PLATFORM_USER_ID=...
+#   GENAI_PLATFORM_PROJECT_NAME=...
+#   (Plus Azure AD credentials for token acquisition)
+#
+# Vertex AI (Direct):
+#   VERTEX_PROJECT_ID=your-gcp-project
+#   VERTEX_LOCATION=us-central1
+#   (Uses Application Default Credentials)
+#
+# Vertex AI (GenAI Platform):
+#   GENAI_PLATFORM_ENABLED=true
+#   GENAI_PLATFORM_BASE_URL=https://genai.yourcompany.com
+#   GENAI_PLATFORM_PATH=stg/v1
+#   (Plus Azure AD credentials for token acquisition)
+
+defaults:
+  chat: openrouter/openai/gpt-4o-mini
+  vision: openrouter/google/gemini-2.0-flash-001
+  embedding: openai/text-embedding-3-small
+
+providers:
+  # ============================================
+  # OpenRouter Provider (multi-model gateway)
+  # ============================================
+  openrouter:
+    name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
+    models:
+      # OpenAI models via OpenRouter
+      openai/gpt-4o-mini:
+        name: GPT-4o Mini (OpenRouter)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+      openai/gpt-4o:
+        name: GPT-4o (OpenRouter)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+      # Google models via OpenRouter
+      google/gemini-2.0-flash-001:
+        name: Gemini 2.0 Flash (OpenRouter)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 8192
+
+      google/gemini-2.5-flash-preview:
+        name: Gemini 2.5 Flash Preview (OpenRouter)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 65536
+
+      # Anthropic models via OpenRouter
+      anthropic/claude-sonnet-4:
+        name: Claude Sonnet 4 (OpenRouter)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 200000
+        max_output: 64000
+
+      # Other providers via OpenRouter
+      minimax/minimax-m2.1:
+        name: Minimax M2.1 (OpenRouter)
+        capabilities: [chat, streaming, tool_calling]
+        context_window: 196000
+        max_output: 100000
+
+  # ============================================
+  # OpenAI Direct Provider
+  # ============================================
+  openai:
+    name: OpenAI Direct
+    base_url: https://api.openai.com/v1
+    models:
+      gpt-4o:
+        name: GPT-4o
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+      gpt-4o-mini:
+        name: GPT-4o Mini
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+      gpt-4.1:
+        name: GPT-4.1
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 32768
+
+      gpt-4.1-mini:
+        name: GPT-4.1 Mini
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 32768
+
+      text-embedding-3-small:
+        name: Text Embedding 3 Small
+        capabilities: [embedding]
+
+      text-embedding-3-large:
+        name: Text Embedding 3 Large
+        capabilities: [embedding]
+
+  # ============================================
+  # Azure OpenAI Provider
+  # Supports both direct and GenAI Platform modes
+  # ============================================
+  azure_openai:
+    name: Azure OpenAI
+    api_version: "2024-08-01-preview"
+    models:
+      gpt-4o:
+        deployment: gpt-4o
+        name: GPT-4o (Azure)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+      gpt-4o-mini:
+        deployment: gpt-4o-mini
+        name: GPT-4o Mini (Azure)
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 128000
+        max_output: 16384
+
+  # ============================================
+  # Vertex AI Provider (Google Cloud)
+  # Supports both direct and GenAI Platform modes
+  # ============================================
+  vertex_ai:
+    name: Vertex AI (Gemini)
+    models:
+      gemini-2.0-flash:
+        name: Gemini 2.0 Flash
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 8192
+
+      gemini-2.5-flash-preview-05-20:
+        name: Gemini 2.5 Flash Preview
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 65536
+
+      gemini-2.5-pro-preview-05-06:
+        name: Gemini 2.5 Pro Preview
+        capabilities: [chat, vision, streaming, tool_calling]
+        context_window: 1000000
+        max_output: 65536
