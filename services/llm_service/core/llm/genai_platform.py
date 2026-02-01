@@ -136,19 +136,19 @@ def validate_genai_config(settings: Settings) -> None:
         >>> validate_genai_config(get_settings())  # raises if misconfigured
     """
     # Skip validation if GenAI Platform is not enabled
-    if not settings.genai_platform_enabled:
+    if not settings.genai_platform.enabled:
         return
 
     missing_fields: list[str] = []
 
     # Check required fields when GenAI Platform is enabled
-    if not settings.genai_platform_base_url:
+    if not settings.genai_platform.base_url:
         missing_fields.append("GENAI_PLATFORM_BASE_URL")
 
-    if not settings.genai_platform_user_id:
+    if not settings.genai_platform.user_id:
         missing_fields.append("GENAI_PLATFORM_USER_ID")
 
-    if not settings.genai_platform_project_name:
+    if not settings.genai_platform.project_name:
         missing_fields.append("GENAI_PLATFORM_PROJECT_NAME")
 
     if missing_fields:

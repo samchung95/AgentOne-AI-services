@@ -317,22 +317,22 @@ def get_provider_credentials(provider_id: str) -> dict[str, Any]:
     # GenAI Platform settings (shared by azure_openai and vertex_ai)
     genai_env = os.getenv("GENAI_PLATFORM_ENABLED")
     if genai_env is None and settings is not None:
-        genai_enabled = bool(getattr(settings, "genai_platform_enabled", False))
+        genai_enabled = settings.genai_platform.enabled
     else:
         genai_enabled = (genai_env or "false").lower() == "true"
     if genai_enabled:
         creds["genai_platform_enabled"] = True
-        creds["genai_platform_base_url"] = os.getenv("GENAI_PLATFORM_BASE_URL") or getattr(
-            settings, "genai_platform_base_url", ""
+        creds["genai_platform_base_url"] = (
+            os.getenv("GENAI_PLATFORM_BASE_URL") or settings.genai_platform.base_url if settings else ""
         )
-        creds["genai_platform_path"] = os.getenv("GENAI_PLATFORM_PATH") or getattr(
-            settings, "genai_platform_path", "stg/v1"
+        creds["genai_platform_path"] = (
+            os.getenv("GENAI_PLATFORM_PATH") or settings.genai_platform.path if settings else "stg/v1"
         )
-        creds["genai_platform_user_id"] = os.getenv("GENAI_PLATFORM_USER_ID") or getattr(
-            settings, "genai_platform_user_id", ""
+        creds["genai_platform_user_id"] = (
+            os.getenv("GENAI_PLATFORM_USER_ID") or settings.genai_platform.user_id if settings else ""
         )
-        creds["genai_platform_project_name"] = os.getenv("GENAI_PLATFORM_PROJECT_NAME") or getattr(
-            settings, "genai_platform_project_name", ""
+        creds["genai_platform_project_name"] = (
+            os.getenv("GENAI_PLATFORM_PROJECT_NAME") or settings.genai_platform.project_name if settings else ""
         )
     else:
         creds["genai_platform_enabled"] = False

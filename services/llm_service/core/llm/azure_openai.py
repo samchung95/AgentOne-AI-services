@@ -96,9 +96,9 @@ class AzureOpenAIClient(BaseLLMClient):
             The Azure OpenAI endpoint URL.
         """
         if self._settings:
-            genai_enabled = self._settings.genai_platform_enabled
-            genai_base_url = self._settings.genai_platform_base_url
-            genai_path = self._settings.genai_platform_path
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_path = self._settings.genai_platform.path
             direct_endpoint = self._settings.azure_openai.endpoint
         else:
             genai_enabled = self._genai_platform_enabled
@@ -127,8 +127,8 @@ class AzureOpenAIClient(BaseLLMClient):
             The appropriate CredentialProvider for the configuration.
         """
         if self._settings:
-            genai_enabled = self._settings.genai_platform_enabled
-            genai_base_url = self._settings.genai_platform_base_url
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
             direct_api_key = self._settings.azure_openai.api_key
         else:
             genai_enabled = self._genai_platform_enabled
@@ -161,10 +161,10 @@ class AzureOpenAIClient(BaseLLMClient):
         # Get API version and GenAI Platform settings
         if self._settings:
             api_version = self._settings.azure_openai.api_version
-            genai_enabled = self._settings.genai_platform_enabled
-            genai_base_url = self._settings.genai_platform_base_url
-            genai_user_id = self._settings.genai_platform_user_id
-            genai_project_name = self._settings.genai_platform_project_name
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_user_id = self._settings.genai_platform.user_id
+            genai_project_name = self._settings.genai_platform.project_name
         else:
             api_version = self._direct_api_version or "2024-08-01-preview"
             genai_enabled = self._genai_platform_enabled

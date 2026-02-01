@@ -102,6 +102,29 @@ class VertexAISettings(BaseSettings):
     api_key: str | None = Field(default=None, description="API key for Gemini API")
 
 
+class GenAIPlatformSettings(BaseSettings):
+    """GenAI Platform gateway settings.
+
+    Environment variables are prefixed with GENAI_PLATFORM_ (e.g., GENAI_PLATFORM_ENABLED).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="GENAI_PLATFORM_",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False, description="Use company GenAI Platform gateway for Azure OpenAI")
+    base_url: str = Field(
+        default="https://genai-platform-dev.pg.com", description="GenAI Platform base URL"
+    )
+    path: str = Field(default="stg/v1", description="GenAI Platform API path")
+    user_id: str | None = Field(default=None, description="User ID for GenAI Platform")
+    project_name: str | None = Field(default=None, description="Project name registered in GenAI Platform")
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -128,20 +151,8 @@ class Settings(BaseSettings):
     # Azure OpenAI Configuration (nested settings)
     azure_openai: AzureOpenAISettings = Field(default_factory=AzureOpenAISettings)
 
-    # GenAI Platform Configuration (Company Azure GenAI Gateway)
-    genai_platform_enabled: bool = Field(
-        default=False, description="Use company GenAI Platform gateway for Azure OpenAI"
-    )
-    genai_platform_base_url: str = Field(
-        default="https://genai-platform-dev.pg.com", description="GenAI Platform base URL"
-    )
-    genai_platform_path: str = Field(default="stg/v1", description="GenAI Platform API path")
-    genai_platform_user_id: str | None = Field(
-        default=None, description="User ID for GenAI Platform"
-    )
-    genai_platform_project_name: str | None = Field(
-        default=None, description="Project name registered in GenAI Platform"
-    )
+    # GenAI Platform Configuration (nested settings)
+    genai_platform: GenAIPlatformSettings = Field(default_factory=GenAIPlatformSettings)
 
     # OpenAI Configuration (nested settings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)

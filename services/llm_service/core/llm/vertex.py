@@ -107,9 +107,9 @@ class VertexAIClient(BaseLLMClient):
             The Vertex AI endpoint URL, or empty string for direct mode.
         """
         if self._settings:
-            genai_enabled = getattr(self._settings, "genai_platform_enabled", False)
-            genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
-            genai_path = getattr(self._settings, "genai_platform_path", None)
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_path = self._settings.genai_platform.path
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url
@@ -138,8 +138,8 @@ class VertexAIClient(BaseLLMClient):
             GCPCredentialProvider for direct mode, or None for GenAI Platform mode.
         """
         if self._settings:
-            genai_enabled = getattr(self._settings, "genai_platform_enabled", False)
-            genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url
@@ -165,10 +165,10 @@ class VertexAIClient(BaseLLMClient):
             Configured ChatGoogleGenerativeAI client.
         """
         if self._settings:
-            genai_enabled = getattr(self._settings, "genai_platform_enabled", False)
-            genai_base_url = getattr(self._settings, "genai_platform_base_url", None)
-            genai_user_id = getattr(self._settings, "genai_platform_user_id", None)
-            genai_project_name = getattr(self._settings, "genai_platform_project_name", None)
+            genai_enabled = self._settings.genai_platform.enabled
+            genai_base_url = self._settings.genai_platform.base_url
+            genai_user_id = self._settings.genai_platform.user_id
+            genai_project_name = self._settings.genai_platform.project_name
             project_id = self._settings.vertex_ai.project_id
             location = self._settings.vertex_ai.location
         else:

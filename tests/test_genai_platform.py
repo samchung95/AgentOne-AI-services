@@ -224,7 +224,7 @@ class TestValidateGenaiConfig:
     def test_skips_validation_when_disabled(self):
         """Test that validation is skipped when GenAI Platform is disabled."""
         settings = MagicMock()
-        settings.genai_platform_enabled = False
+        settings.genai_platform.enabled = False
 
         # Should not raise even with missing fields
         validate_genai_config(settings)
@@ -232,10 +232,10 @@ class TestValidateGenaiConfig:
     def test_valid_config_passes_validation(self):
         """Test that valid config with all required fields passes."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = "https://genai.example.com"
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = "https://genai.example.com"
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = "my-project"
 
         # Should not raise
         validate_genai_config(settings)
@@ -243,10 +243,10 @@ class TestValidateGenaiConfig:
     def test_raises_when_base_url_missing(self):
         """Test that ConfigurationError is raised when base_url is missing."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = None
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = None
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = "my-project"
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -257,10 +257,10 @@ class TestValidateGenaiConfig:
     def test_raises_when_user_id_missing(self):
         """Test that ConfigurationError is raised when user_id is missing."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = "https://genai.example.com"
-        settings.genai_platform_user_id = None
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = "https://genai.example.com"
+        settings.genai_platform.user_id = None
+        settings.genai_platform.project_name = "my-project"
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -271,10 +271,10 @@ class TestValidateGenaiConfig:
     def test_raises_when_project_name_missing(self):
         """Test that ConfigurationError is raised when project_name is missing."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = "https://genai.example.com"
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = None
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = "https://genai.example.com"
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = None
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -285,10 +285,10 @@ class TestValidateGenaiConfig:
     def test_raises_with_all_missing_fields(self):
         """Test that all missing fields are listed when multiple are missing."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = None
-        settings.genai_platform_user_id = None
-        settings.genai_platform_project_name = None
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = None
+        settings.genai_platform.user_id = None
+        settings.genai_platform.project_name = None
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -302,10 +302,10 @@ class TestValidateGenaiConfig:
     def test_treats_empty_string_as_missing(self):
         """Test that empty strings are treated as missing values."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = ""
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = ""
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = "my-project"
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -315,10 +315,10 @@ class TestValidateGenaiConfig:
     def test_error_has_correct_code(self):
         """Test that the raised error has CONFIGURATION_ERROR code."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = None
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = None
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = "my-project"
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
@@ -328,10 +328,10 @@ class TestValidateGenaiConfig:
     def test_error_is_not_retryable(self):
         """Test that ConfigurationError is not retryable."""
         settings = MagicMock()
-        settings.genai_platform_enabled = True
-        settings.genai_platform_base_url = None
-        settings.genai_platform_user_id = "user123"
-        settings.genai_platform_project_name = "my-project"
+        settings.genai_platform.enabled = True
+        settings.genai_platform.base_url = None
+        settings.genai_platform.user_id = "user123"
+        settings.genai_platform.project_name = "my-project"
 
         with pytest.raises(ConfigurationError) as exc_info:
             validate_genai_config(settings)
