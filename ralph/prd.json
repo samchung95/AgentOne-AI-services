@@ -1,0 +1,566 @@
+{
+  "project": "AgentOne LLM Service",
+  "branchName": "ralph/tech-debt-review",
+  "description": "Comprehensive tech debt remediation - reduce code duplication, restructure configuration, and add production features (rate limiting, streaming reliability)",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add ProviderID enum and constants",
+      "description": "As a developer, I want all provider names and magic values in constants so they are consistent and discoverable.",
+      "acceptanceCriteria": [
+        "Create/extend services/llm_service/core/config/constants.py",
+        "Add ProviderID enum with values: OPENAI, OPENROUTER, AZURE_OPENAI, VERTEX_AI, REMOTE",
+        "Add RETRYABLE_STATUS_CODES frozenset: {429, 500, 502, 503, 504}",
+        "Add DEFAULT_TIMEOUT_SECONDS constant (default: 60)",
+        "Add DEFAULT_MAX_RETRIES constant (default: 3)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added ProviderID enum and constants to constants.py"
+    },
+    {
+      "id": "US-002",
+      "title": "Replace magic strings in factory.py with ProviderID enum",
+      "description": "As a developer, I want factory.py to use the ProviderID enum so provider selection is type-safe.",
+      "acceptanceCriteria": [
+        "Import ProviderID from constants.py in factory.py",
+        "Replace all string literals 'openai', 'openrouter', 'azure_openai', 'vertex_ai', 'remote' with ProviderID enum values",
+        "Update any comparisons to use enum (e.g., provider == ProviderID.OPENAI)",
+        "All existing unit tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Replaced string literals with ProviderID enum in factory.py comparisons and MissingAPIKeyError calls"
+    },
+    {
+      "id": "US-003",
+      "title": "Replace status code literals in retry.py with constants",
+      "description": "As a developer, I want retry.py to use RETRYABLE_STATUS_CODES constant so retryable errors are defined in one place.",
+      "acceptanceCriteria": [
+        "Import RETRYABLE_STATUS_CODES from constants.py in retry.py",
+        "Replace hardcoded status codes (429, 500, 502, 503, 504) with the constant",
+        "All existing retry tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Imported RETRYABLE_STATUS_CODES and used it in RetryConfig default factory"
+    },
+    {
+      "id": "US-004",
+      "title": "Create CredentialProvider protocol",
+      "description": "As a developer, I want a CredentialProvider protocol so credential retrieval is abstracted uniformly.",
+      "acceptanceCriteria": [
+        "Create services/llm_service/core/llm/credentials.py",
+        "Define CredentialProvider Protocol with method: get_credentials() -> dict[str, Any]",
+        "Implement APIKeyCredentialProvider that returns {'api_key': key}",
+        "Add unit tests for APIKeyCredentialProvider",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created CredentialProvider Protocol and APIKeyCredentialProvider in credentials.py with 5 unit tests"
+    },
+    {
+      "id": "US-005",
+      "title": "Implement AzureADCredentialProvider",
+      "description": "As a developer, I want Azure AD credentials wrapped in the CredentialProvider interface.",
+      "acceptanceCriteria": [
+        "Add AzureADCredentialProvider class to credentials.py",
+        "Wrap existing azure_token.py logic for token retrieval",
+        "Return {'token': token, 'token_type': 'Bearer'}",
+        "Add unit test with mocked token retrieval",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added AzureADCredentialProvider wrapping TokenProvider protocol from azure_token.py with 4 unit tests"
+    },
+    {
+      "id": "US-006",
+      "title": "Implement GCPCredentialProvider",
+      "description": "As a developer, I want GCP credentials wrapped in the CredentialProvider interface.",
+      "acceptanceCriteria": [
+        "Add GCPCredentialProvider class to credentials.py",
+        "Use google-auth library for credential retrieval",
+        "Return {'credentials': credentials_object}",
+        "Add unit test with mocked credentials",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added GCPCredentialProvider class using google-auth library with 6 unit tests for ADC, custom credentials, and custom scopes"
+    },
+    {
+      "id": "US-007",
+      "title": "Add _initialize_client template method to BaseLLMClient",
+      "description": "As a developer, I want a template method in the base class so client initialization follows a consistent pattern.",
+      "acceptanceCriteria": [
+        "Add _initialize_client() method to BaseLLMClient in base.py",
+        "Define abstract method _create_client_instance() that subclasses must implement",
+        "Define abstract method _get_endpoint() that returns the API endpoint URL",
+        "Add _client property that calls _initialize_client() lazily",
+        "Add unit test verifying template method calls hooks in order",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added template method pattern with _get_endpoint(), _get_credential_provider(), _create_client_instance(), _initialize_client(), and client property. Includes 4 unit tests."
+    },
+    {
+      "id": "US-008",
+      "title": "Migrate OpenAI client to use base initialization",
+      "description": "As a developer, I want openai_client.py to use the base class template for initialization.",
+      "acceptanceCriteria": [
+        "Implement _create_client_instance() in OpenAIClient",
+        "Implement _get_endpoint() returning OpenAI API URL",
+        "Use APIKeyCredentialProvider for credentials",
+        "Remove old _ensure_client() method",
+        "All existing OpenAI tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Migrated OpenAIClient to use template method pattern with _get_endpoint(), _get_credential_provider(), and _create_client_instance()"
+    },
+    {
+      "id": "US-009",
+      "title": "Migrate OpenRouter client to use base initialization",
+      "description": "As a developer, I want openrouter_client.py to use the base class template for initialization.",
+      "acceptanceCriteria": [
+        "Implement _create_client_instance() in OpenRouterClient",
+        "Implement _get_endpoint() returning OpenRouter API URL",
+        "Use APIKeyCredentialProvider for credentials",
+        "Remove old _ensure_client() method",
+        "All existing OpenRouter tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Migrated OpenRouterClient to use template method pattern with _get_endpoint(), _get_credential_provider(), and _create_client_instance()"
+    },
+    {
+      "id": "US-010",
+      "title": "Migrate Azure OpenAI client to use base initialization",
+      "description": "As a developer, I want azure_openai.py to use the base class template for initialization.",
+      "acceptanceCriteria": [
+        "Implement _create_client_instance() in AzureOpenAIClient",
+        "Implement _get_endpoint() returning Azure endpoint",
+        "Use AzureADCredentialProvider for credentials",
+        "Remove old _ensure_client() method",
+        "All existing Azure tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Migrated AzureOpenAIClient to use template method pattern with _get_endpoint(), _get_credential_provider(), and _create_client_instance(). Handles three credential modes: GenAI Platform (Azure AD token), direct API key, and default Azure AD token."
+    },
+    {
+      "id": "US-011",
+      "title": "Migrate Vertex client to use base initialization",
+      "description": "As a developer, I want vertex.py to use the base class template for initialization.",
+      "acceptanceCriteria": [
+        "Implement _create_client_instance() in VertexClient",
+        "Implement _get_endpoint() returning Vertex endpoint",
+        "Use GCPCredentialProvider for credentials",
+        "Remove old _ensure_client() method",
+        "All existing Vertex tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Migrated VertexAIClient to use template method pattern with _get_endpoint(), _get_credential_provider(), _create_client_instance(), and overrode _initialize_client() for dual credential modes (GenAI Platform with SPCredentials vs Direct Vertex AI with GCPCredentialProvider)."
+    },
+    {
+      "id": "US-012",
+      "title": "Migrate Remote client to use base initialization",
+      "description": "As a developer, I want remote_client.py to use the base class template for initialization.",
+      "acceptanceCriteria": [
+        "Implement _create_client_instance() in RemoteClient",
+        "Implement _get_endpoint() returning configured remote URL",
+        "Use appropriate CredentialProvider based on config",
+        "Remove old _ensure_client() method",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Migrated RemoteLLMClient to use template method pattern with _get_endpoint(), _create_client_instance(), and _initialize_client() override (for external client injection). No CredentialProvider needed as authentication is handled by remote service."
+    },
+    {
+      "id": "US-013",
+      "title": "Create GenAI Platform module with header builder",
+      "description": "As a developer, I want GenAI Platform header logic in one module so Azure and Vertex clients share it.",
+      "acceptanceCriteria": [
+        "Create services/llm_service/core/llm/genai_platform.py",
+        "Implement build_genai_headers(user_id: str, project_name: str, token: str) -> dict",
+        "Headers include: Authorization, X-User-ID, X-Project-Name",
+        "Add unit tests for header building",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created genai_platform.py with build_genai_headers() function. Headers use 'userid' and 'project-name' keys to match existing Azure/Vertex implementations. Includes 10 unit tests."
+    },
+    {
+      "id": "US-014",
+      "title": "Add GenAI Platform endpoint resolver",
+      "description": "As a developer, I want endpoint resolution logic in the GenAI Platform module.",
+      "acceptanceCriteria": [
+        "Add resolve_genai_endpoint(base_url: str, path: str, provider: ProviderID) -> str to genai_platform.py",
+        "Handle URL joining correctly (avoid double slashes)",
+        "Add unit tests for various URL combinations",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added resolve_genai_endpoint() function with proper URL normalization (handles trailing/leading slashes) and Vertex AI /vertexai suffix. Includes 18 unit tests covering various URL combinations."
+    },
+    {
+      "id": "US-015",
+      "title": "Add GenAI Platform configuration validation",
+      "description": "As a developer, I want GenAI Platform config validated at startup for fast failure.",
+      "acceptanceCriteria": [
+        "Add validate_genai_config(settings) function to genai_platform.py",
+        "Validate GENAI_PLATFORM_BASE_URL, GENAI_PLATFORM_USER_ID, GENAI_PLATFORM_PROJECT_NAME when enabled",
+        "Raise ConfigurationError with list of missing fields",
+        "Add unit tests for validation (valid config, missing fields)",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added validate_genai_config() function with 9 unit tests for valid/invalid configurations."
+    },
+    {
+      "id": "US-016",
+      "title": "Refactor Azure client to use GenAI Platform module",
+      "description": "As a developer, I want azure_openai.py to use the shared GenAI Platform module.",
+      "acceptanceCriteria": [
+        "Import functions from genai_platform.py in azure_openai.py",
+        "Replace inline header building with build_genai_headers()",
+        "Replace inline endpoint logic with resolve_genai_endpoint()",
+        "Remove duplicate GenAI Platform code from azure_openai.py",
+        "All existing Azure tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Refactored Azure client to use resolve_genai_endpoint() and build_genai_headers() from the shared genai_platform.py module."
+    },
+    {
+      "id": "US-017",
+      "title": "Refactor Vertex client to use GenAI Platform module",
+      "description": "As a developer, I want vertex.py to use the shared GenAI Platform module.",
+      "acceptanceCriteria": [
+        "Import functions from genai_platform.py in vertex.py",
+        "Replace inline header building with build_genai_headers()",
+        "Replace inline endpoint logic with resolve_genai_endpoint()",
+        "Remove duplicate GenAI Platform code from vertex.py",
+        "All existing Vertex tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Refactored Vertex client to use resolve_genai_endpoint() and build_genai_headers() from the shared genai_platform.py module."
+    },
+    {
+      "id": "US-018",
+      "title": "Create nested OpenAISettings dataclass",
+      "description": "As a developer, I want OpenAI settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create OpenAISettings class in settings.py using Pydantic BaseModel",
+        "Move OPENAI_API_KEY field to this class",
+        "Use model_config with env_prefix='OPENAI_' for env var binding",
+        "Add openai: OpenAISettings field to main Settings class",
+        "Update OpenAI client to use settings.openai.api_key",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created OpenAISettings class with env_prefix='OPENAI_', added openai field to Settings, updated OpenAI client to use nested settings"
+    },
+    {
+      "id": "US-019",
+      "title": "Create nested OpenRouterSettings dataclass",
+      "description": "As a developer, I want OpenRouter settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create OpenRouterSettings class in settings.py",
+        "Move OPENROUTER_API_KEY, OPENROUTER_SITE_URL, OPENROUTER_APP_NAME fields",
+        "Use env_prefix='OPENROUTER_'",
+        "Add openrouter: OpenRouterSettings to main Settings",
+        "Update OpenRouter client to use nested settings",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created OpenRouterSettings class with env_prefix='OPENROUTER_', added openrouter field to Settings, updated OpenRouter client to use nested settings"
+    },
+    {
+      "id": "US-020",
+      "title": "Create nested AzureOpenAISettings dataclass",
+      "description": "As a developer, I want Azure OpenAI settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create AzureOpenAISettings class in settings.py",
+        "Move AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION fields",
+        "Use env_prefix='AZURE_OPENAI_'",
+        "Add azure_openai: AzureOpenAISettings to main Settings",
+        "Update Azure client to use nested settings",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created AzureOpenAISettings class with env_prefix='AZURE_OPENAI_', added azure_openai field to Settings, updated Azure client to use nested settings"
+    },
+    {
+      "id": "US-021",
+      "title": "Create nested VertexAISettings dataclass",
+      "description": "As a developer, I want Vertex AI settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create VertexAISettings class in settings.py",
+        "Move VERTEX_PROJECT_ID, VERTEX_LOCATION, VERTEX_MODEL, VERTEX_API_KEY fields",
+        "Use env_prefix='VERTEX_'",
+        "Add vertex_ai: VertexAISettings to main Settings",
+        "Update Vertex client to use nested settings",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created VertexAISettings class with env_prefix='VERTEX_', added vertex_ai field to Settings, updated Vertex client to use nested settings"
+    },
+    {
+      "id": "US-022",
+      "title": "Create nested GenAIPlatformSettings dataclass",
+      "description": "As a developer, I want GenAI Platform settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create GenAIPlatformSettings class in settings.py",
+        "Move GENAI_PLATFORM_ENABLED, GENAI_PLATFORM_BASE_URL, GENAI_PLATFORM_PATH, GENAI_PLATFORM_USER_ID, GENAI_PLATFORM_PROJECT_NAME fields",
+        "Use env_prefix='GENAI_PLATFORM_'",
+        "Add genai_platform: GenAIPlatformSettings to main Settings",
+        "Update genai_platform.py to use nested settings",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created GenAIPlatformSettings class with env_prefix='GENAI_PLATFORM_', added genai_platform field to Settings, updated Azure OpenAI, Vertex AI clients, models.py, and genai_platform.py to use nested settings"
+    },
+    {
+      "id": "US-023",
+      "title": "Create nested TelemetrySettings dataclass",
+      "description": "As a developer, I want telemetry settings grouped in a dataclass for discoverability.",
+      "acceptanceCriteria": [
+        "Create TelemetrySettings class in settings.py",
+        "Move ENABLE_TELEMETRY, APPINSIGHTS_CONNECTION_STRING fields",
+        "Add telemetry: TelemetrySettings to main Settings",
+        "Update any telemetry initialization to use nested settings",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created TelemetrySettings class with validation_alias for existing env var names (ENABLE_TELEMETRY, APPINSIGHTS_CONNECTION_STRING), added telemetry field to Settings"
+    },
+    {
+      "id": "US-024",
+      "title": "Create settings documentation generator script",
+      "description": "As a developer, I want auto-generated docs for all environment variables.",
+      "acceptanceCriteria": [
+        "Create scripts/generate_env_docs.py",
+        "Script introspects Settings class and all nested dataclasses",
+        "Generates markdown table with: variable name, type, default value, description",
+        "Groups variables by provider/concern (OpenAI, Azure, etc.)",
+        "Output written to docs/configuration.md",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created scripts/generate_env_docs.py that introspects pydantic Settings classes and generates docs/configuration.md with grouped markdown tables."
+    },
+    {
+      "id": "US-025",
+      "title": "Integrate dispatcher into FastAPI app",
+      "description": "As an operator, I want rate limiting active on all LLM endpoints.",
+      "acceptanceCriteria": [
+        "Import LLMDispatcher in main.py",
+        "Initialize dispatcher with settings during app startup",
+        "Wrap /v1/chat/completions endpoint handler with dispatcher",
+        "Wrap /v1/chat/completions/stream endpoint handler with dispatcher",
+        "Add basic integration test that dispatcher is called",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Integrated dispatcher into /v1/generate and /v1/generate-stream endpoints with 3 unit tests. Note: endpoint names are /v1/generate not /v1/chat/completions."
+    },
+    {
+      "id": "US-026",
+      "title": "Add dispatcher status to health endpoint",
+      "description": "As an operator, I want the health endpoint to report dispatcher status.",
+      "acceptanceCriteria": [
+        "Extend /health endpoint response with dispatcher_status field",
+        "Include: active_requests, queue_depth, rate_limit_remaining",
+        "Return healthy status even if rate limited (rate limiting is expected)",
+        "Add unit test for health response format",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added get_status() method to LLMDispatcher and dispatcher_status field to /health endpoint with unit test"
+    },
+    {
+      "id": "US-027",
+      "title": "Add request queue to dispatcher",
+      "description": "As an operator, I want requests queued during rate limits instead of immediate rejection.",
+      "acceptanceCriteria": [
+        "Add max_queue_size setting to dispatcher (default: 100)",
+        "Add queue_timeout_seconds setting (default: 30)",
+        "Implement asyncio.Queue for pending requests when rate limited",
+        "Return 429 with Retry-After header when queue is full",
+        "Add unit tests for queue behavior (enqueue, dequeue, overflow)",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added request queuing with asyncio.Queue, max_queue_size setting (100), QueueFullError with retry_after, and 6 unit tests for queue behavior"
+    },
+    {
+      "id": "US-028",
+      "title": "Add circuit breaker to dispatcher",
+      "description": "As an operator, I want unhealthy providers temporarily bypassed.",
+      "acceptanceCriteria": [
+        "Add ProviderHealth enum: HEALTHY, DEGRADED, UNHEALTHY",
+        "Track success/failure count per provider in sliding window (last 100 requests)",
+        "Implement circuit breaker states: closed (normal), open (reject), half-open (test)",
+        "Open circuit after 50% failure rate, half-open after 30 seconds",
+        "Add unit tests for state transitions",
+        "Typecheck passes"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added CircuitBreaker dataclass with sliding window (100 requests), CircuitState enum, CircuitOpenError exception, and 14 unit tests for state transitions."
+    },
+    {
+      "id": "US-029",
+      "title": "Add provider health to health endpoint",
+      "description": "As an operator, I want the health endpoint to show per-provider health status.",
+      "acceptanceCriteria": [
+        "Extend /health response with providers field containing health per provider",
+        "Include: provider_id, health_status, success_rate, circuit_state",
+        "Log provider state transitions with structlog",
+        "Add unit test for provider health in response",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added get_provider_health() method to dispatcher and providers field to /health endpoint with unit test."
+    },
+    {
+      "id": "US-030",
+      "title": "Add streaming chunk buffer to retry logic",
+      "description": "As a developer, I want streaming to buffer chunks for potential replay on failure.",
+      "acceptanceCriteria": [
+        "Add max_buffer_chunks setting to retry config (default: 1000)",
+        "Modify retry_async_generator() to buffer yielded chunks",
+        "Buffer stored in memory, cleared on successful completion",
+        "Add unit test verifying chunks are buffered",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added DEFAULT_MAX_BUFFER_CHUNKS constant (1000), max_buffer_chunks field to RetryConfig, chunk buffer in retry_async_generator() with 4 unit tests."
+    },
+    {
+      "id": "US-031",
+      "title": "Implement streaming retry with chunk replay",
+      "description": "As a developer, I want failed streams to replay buffered chunks before retrying.",
+      "acceptanceCriteria": [
+        "On retryable failure in retry_async_generator(), yield buffered chunks first",
+        "Then continue iteration from provider (retry)",
+        "Add enable_stream_replay setting (default: true)",
+        "Add unit test for replay behavior (failure mid-stream, chunks replayed)",
+        "Typecheck passes"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added enable_stream_replay setting (default: True) and implemented chunk replay in retry_async_generator() with 4 unit tests."
+    },
+    {
+      "id": "US-032",
+      "title": "Preserve original tool call IDs",
+      "description": "As a developer, I want tool call IDs normalized while preserving originals for debugging.",
+      "acceptanceCriteria": [
+        "Add provider_id: str | None field to ToolCall model in tool_models.py",
+        "Modify normalize_tool_call_id() to return (normalized_id, original_id) tuple",
+        "Store original in provider_id field when creating ToolCall objects",
+        "Update mixin.py tool call creation to use new pattern",
+        "Add unit test verifying original ID preserved",
+        "Typecheck passes"
+      ],
+      "priority": 32,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added provider_id field to ToolCall model, modified normalize_tool_call_id() to return tuple (normalized_id, original_id), updated mixin.py and vertex.py to use new pattern and store original provider IDs. All 193 tests pass."
+    },
+    {
+      "id": "US-033",
+      "title": "Create mock response fixtures for testing",
+      "description": "As a developer, I want mock response files so tests can run without real API keys.",
+      "acceptanceCriteria": [
+        "Create tests/fixtures/ directory",
+        "Add mock_openai_response.json with valid completion response",
+        "Add mock_openai_stream.json with streaming chunks array",
+        "Add mock_tool_call_response.json with tool call response",
+        "Add mock_error_response.json with error structure",
+        "Typecheck passes"
+      ],
+      "priority": 33,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created tests/fixtures/ directory with mock_openai_response.json, mock_openai_stream.json, mock_tool_call_response.json, and mock_error_response.json"
+    },
+    {
+      "id": "US-034",
+      "title": "Add --mock-providers pytest flag",
+      "description": "As a developer, I want a pytest flag to run tests with mocked providers.",
+      "acceptanceCriteria": [
+        "Add --mock-providers flag to conftest.py using pytest_addoption",
+        "When flag set, add mock_providers fixture that patches all client classes",
+        "Mock clients return responses from fixture files",
+        "Document flag usage in tests/README.md or docstring",
+        "Typecheck passes"
+      ],
+      "priority": 34,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added --mock-providers pytest flag with pytest_addoption, mock_providers fixture that patches all LLM client classes, and pytest_collection_modifyitems for auto-apply when flag is set"
+    },
+    {
+      "id": "US-035",
+      "title": "Create cross-provider test suite",
+      "description": "As a developer, I want parameterized tests validating consistent behavior across providers.",
+      "acceptanceCriteria": [
+        "Create tests/test_cross_provider.py",
+        "Use @pytest.mark.parametrize for all provider types",
+        "Test: basic completion returns LLMResponse with content",
+        "Test: streaming yields LLMChunk objects",
+        "Test: tool calling returns ToolCall objects with valid IDs",
+        "Tests work with --mock-providers flag",
+        "Typecheck passes"
+      ],
+      "priority": 35,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Created test_cross_provider.py with 65 parameterized tests covering basic completion, streaming, tool calling, and client lifecycle across all 5 providers. Fixed conftest.py to create valid ToolCall objects with proper field names."
+    },
+    {
+      "id": "US-036",
+      "title": "Add pytest markers for integration tests",
+      "description": "As a developer, I want pytest markers to selectively run integration tests.",
+      "acceptanceCriteria": [
+        "Add pytest.mark.integration marker definition to pyproject.toml",
+        "Add pytest.mark.provider_openai, provider_azure, provider_vertex, provider_openrouter markers",
+        "Apply markers to existing integration tests in tests/integration/",
+        "Document marker usage in tests/integration/README.md",
+        "Typecheck passes"
+      ],
+      "priority": 36,
+      "passes": true,
+      "notes": "Completed 2026-02-01: Added all markers to pyproject.toml, applied to test_llm_providers.py and test_vertex_integration.py using pytestmark module-level and class decorators, created README.md with usage examples."
+    }
+  ]
+}
