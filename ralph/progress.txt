@@ -1,0 +1,422 @@
+# Ralph Progress Log
+# Project: AgentOne LLM Service - Tech Debt Review
+# Branch: ralph/tech-debt-review
+# Started: 2026-02-01
+
+## Codebase Patterns
+- Use `uv run ruff check --fix <file>` to auto-fix lint issues like import ordering
+- Use `uv run pytest tests/ -v --tb=short` to run tests (integration tests will be skipped without API keys)
+- The project uses ruff for linting, not mypy for typechecking
+- Provider IDs in the codebase use string literals like "openai", "azure_openai", "vertex_ai" - these should be migrated to ProviderID enum
+- When using frozenset constants as defaults for mutable set fields, wrap with `set()` in the default_factory
+- BaseLLMClient has template methods for initialization: override _get_endpoint(), _get_credential_provider(), _create_client_instance() and use the client property for lazy init
+- For nested settings classes: use pydantic-settings BaseSettings with model_config containing env_prefix for automatic env var binding (e.g., OpenAISettings with env_prefix='OPENAI_' maps OPENAI_API_KEY to api_key)
+- When env var names don't follow a consistent prefix pattern, use Field(validation_alias="ENV_VAR_NAME") instead of env_prefix
+- LLMDispatcher uses `async with await dispatcher.acquire(provider)` pattern - the acquire() method is async and returns a context manager
+
+---
+
+## 2026-02-01 - US-001
+- What was implemented: Added ProviderID enum and constants to services/llm_service/core/config/constants.py
+- Files changed:
+  - services/llm_service/core/config/constants.py (added ProviderID enum, RETRYABLE_STATUS_CODES, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECONDS)
+- **Learnings for future iterations:**
+  - Patterns discovered: The constants.py file already existed with LLM dispatcher and timeout constants - follow the same section-based organization pattern
+  - Gotchas encountered: Ruff requires imports to be sorted; use `--fix` flag to auto-fix
+  - Useful context: ProviderID is a str enum for easy comparison with existing string literals during migration
+---
+
+## 2026-02-01 - US-002
+- What was implemented: Replaced magic strings in factory.py with ProviderID enum values
+- Files changed:
+  - services/llm_service/core/llm/factory.py (imported ProviderID, replaced 6 string comparisons with enum values)
+- **Learnings for future iterations:**
+  - Patterns discovered: Since ProviderID is a str enum, direct comparison with `==` works seamlessly - no need for `.value` accessor
+  - Gotchas encountered: MissingAPIKeyError also used hardcoded provider strings - these should be migrated too for consistency
+  - Useful context: factory.py uses if/elif chain for provider selection - consider match/case in Python 3.10+ for cleaner code
+---
+
+## 2026-02-01 - US-003
+- What was implemented: Replaced hardcoded status codes in retry.py with RETRYABLE_STATUS_CODES constant
+- Files changed:
+  - services/llm_service/core/llm/retry.py (imported RETRYABLE_STATUS_CODES, updated RetryConfig default factory)
+- **Learnings for future iterations:**
+  - Patterns discovered: RETRYABLE_STATUS_CODES is a frozenset, so wrap with `set()` when using as default for mutable set field
+  - Gotchas encountered: None - clean refactor
+  - Useful context: All 15 retry tests pass, confirming the constant matches the original hardcoded values
+---
+
+## 2026-02-01 - US-004
+- What was implemented: Created CredentialProvider protocol and APIKeyCredentialProvider implementation
+- Files changed:
+  - services/llm_service/core/llm/credentials.py (new file with CredentialProvider Protocol and APIKeyCredentialProvider class)
+  - tests/test_credentials.py (new file with 5 unit tests for APIKeyCredentialProvider)
+- **Learnings for future iterations:**
+  - Patterns discovered: Protocol is defined using `typing.Protocol` for structural subtyping - implementations don't need to explicitly inherit
+  - Gotchas encountered: Ruff flagged unused Protocol import in test file - Protocol checking is structural so explicit import isn't needed for runtime
+  - Useful context: APIKeyCredentialProvider validates non-empty API key in constructor; returns new dict each call to prevent mutation issues
+---
+
+## 2026-02-01 - US-005
+- What was implemented: Added AzureADCredentialProvider class to credentials.py wrapping the TokenProvider protocol from azure_token.py
+- Files changed:
+  - services/llm_service/core/llm/credentials.py (added AzureADCredentialProvider class, added TYPE_CHECKING import for TokenProvider)
+  - tests/test_credentials.py (added 4 unit tests for AzureADCredentialProvider with mocked token retrieval)
+- **Learnings for future iterations:**
+  - Patterns discovered: The TokenProvider protocol in azure_token.py has a `token()` method that handles refresh automatically - just call it on each `get_credentials()` invocation
+  - Gotchas encountered: Use TYPE_CHECKING to avoid circular imports when referencing types from azure_token.py
+  - Useful context: AzureADCredentialProvider returns `{'token': token, 'token_type': 'Bearer'}` - fresh dict on each call to ensure token is current
+---
+
+## 2026-02-01 - US-006
+- What was implemented: Added GCPCredentialProvider class using google-auth library for Application Default Credentials (ADC) or custom credentials
+- Files changed:
+  - services/llm_service/core/llm/credentials.py (added GCPCredentialProvider class with support for ADC and custom credentials/scopes)
+  - tests/test_credentials.py (added 6 unit tests for GCPCredentialProvider)
+- **Learnings for future iterations:**
+  - Patterns discovered: google.auth.default() returns a tuple of (credentials, project_id) - only need the credentials for the provider
+  - Gotchas encountered: google-auth is already a dependency in pyproject.toml - no need to add it
+  - Useful context: GCPCredentialProvider supports both explicit credentials injection (for testing/special cases) and ADC (the common case); default scope is cloud-platform
+---
+
+## 2026-02-01 - US-007
+- What was implemented: Added template method pattern for client initialization to BaseLLMClient
+- Files changed:
+  - services/llm_service/core/llm/base.py (added _get_endpoint, _get_credential_provider, _create_client_instance, _initialize_client, and client property)
+  - tests/test_base.py (added 4 unit tests for template method pattern)
+- **Learnings for future iterations:**
+  - Patterns discovered: Template method pattern allows consistent initialization across providers - hooks are called in order: get_credential_provider -> get_credentials -> get_endpoint -> create_client_instance
+  - Gotchas encountered: Existing subclasses still use _ensure_client() pattern - migration to new template will happen in subsequent stories (US-008 through US-012)
+  - Useful context: The client property uses lazy initialization - client is only created on first access and cached for subsequent calls
+---
+
+## 2026-02-01 - US-008
+- What was implemented: Migrated OpenAIClient to use base class template method pattern for initialization
+- Files changed:
+  - services/llm_service/core/llm/openai_client.py (implemented _get_endpoint, _get_credential_provider, _create_client_instance; replaced _ensure_client() with self.client property; renamed _client to _client_instance)
+- **Learnings for future iterations:**
+  - Patterns discovered: The from_model_config classmethod needs to set all instance attributes including _direct_api_key and _direct_base_url before the template methods are called
+  - Gotchas encountered: Had to remove pre-existing unused import `to_langchain_content` to pass ruff check - clean up unused imports when modifying files
+  - Useful context: OpenAIClient supports two modes: via Settings (standard) and via from_model_config (direct API key/URL); both modes work with the template pattern by checking for _settings presence in _get_endpoint and _get_credential_provider
+---
+
+## 2026-02-01 - US-009
+- What was implemented: Migrated OpenRouterClient to use base class template method pattern for initialization
+- Files changed:
+  - services/llm_service/core/llm/openrouter_client.py (implemented _get_endpoint, _get_credential_provider, _create_client_instance; replaced _ensure_client() with self.client property; renamed _client to _client_instance)
+- **Learnings for future iterations:**
+  - Patterns discovered: OpenRouter requires custom headers (X-Title, HTTP-Referer) - these should be added in _create_client_instance() using the default_headers parameter of AsyncOpenAI
+  - Gotchas encountered: OpenRouterClient has additional direct_* attributes for site_url and app_name beyond what OpenAI needed - the pattern accommodates provider-specific settings
+  - Useful context: The _create_client_instance() method is where provider-specific configuration happens; it receives credentials dict and endpoint, then builds client with any additional provider headers
+---
+
+## 2026-02-01 - US-010
+- What was implemented: Migrated AzureOpenAIClient to use base class template method pattern for initialization
+- Files changed:
+  - services/llm_service/core/llm/azure_openai.py (implemented _get_endpoint, _get_credential_provider, _create_client_instance; replaced _ensure_client() with self.client property; renamed _chat to _client_instance; added imports for credential providers)
+- **Learnings for future iterations:**
+  - Patterns discovered: Azure OpenAI has three credential modes that the template pattern handles well: GenAI Platform (AzureADCredentialProvider), direct API key (APIKeyCredentialProvider), and default Azure AD token (AzureADCredentialProvider without GenAI Platform endpoint)
+  - Gotchas encountered: Initialize all direct_* attributes in __init__ (not just from_model_config) to avoid needing getattr() with defaults later
+  - Useful context: AzureOpenAIClient uses LangChain's AzureChatOpenAI which takes api_key parameter; both 'api_key' from APIKeyCredentialProvider and 'token' from AzureADCredentialProvider can be passed via this parameter
+---
+
+## 2026-02-01 - US-011
+- What was implemented: Migrated VertexAIClient to use base class template method pattern for initialization
+- Files changed:
+  - services/llm_service/core/llm/vertex.py (implemented _get_endpoint, _get_credential_provider, _create_client_instance, _initialize_client; replaced _ensure_client() with self.client property; renamed _chat to _client_instance; added imports for credential providers)
+- **Learnings for future iterations:**
+  - Patterns discovered: Vertex AI has two distinct credential modes requiring different handling: GenAI Platform mode uses SPCredentials (adapts Azure AD tokens to Google Credentials interface) directly in _create_client_instance(), while direct Vertex AI mode uses GCPCredentialProvider for ADC
+  - Gotchas encountered: Had to override _initialize_client() because GenAI Platform mode doesn't use a CredentialProvider - SPCredentials is used directly since it implements google.auth.credentials.Credentials interface
+  - Useful context: For clients with special credential handling (like Vertex AI's SPCredentials), it's valid to override _initialize_client() and handle credentials directly rather than through _get_credential_provider()
+---
+
+## 2026-02-01 - US-012
+- What was implemented: Migrated RemoteLLMClient to use base class template method pattern for initialization
+- Files changed:
+  - services/llm_service/core/llm/remote_client.py (implemented _get_endpoint, _create_client_instance, _initialize_client; replaced _ensure_client() with self.client property; renamed _client to _client_instance and _external_client)
+- **Learnings for future iterations:**
+  - Patterns discovered: RemoteLLMClient is simpler than other clients - it doesn't need a CredentialProvider since authentication is handled by the remote LLM service it delegates to
+  - Gotchas encountered: RemoteLLMClient accepts an optional external httpx.AsyncClient for dependency injection; had to override _initialize_client() to handle this case rather than going through _create_client_instance()
+  - Useful context: For clients that allow external client injection (for testing or connection pooling), override _initialize_client() to check for the external client first before creating a new one
+---
+
+## 2026-02-01 - US-013
+- What was implemented: Created GenAI Platform module with build_genai_headers() function for shared header building
+- Files changed:
+  - services/llm_service/core/llm/genai_platform.py (new file with build_genai_headers function)
+  - tests/test_genai_platform.py (new file with 10 unit tests)
+- **Learnings for future iterations:**
+  - Patterns discovered: The existing Azure and Vertex clients use 'userid' and 'project-name' header keys (not 'X-User-ID' and 'X-Project-Name' as the PRD suggested) - checked azure_openai.py:169-172 and vertex.py:176-179 for the actual header format
+  - Gotchas encountered: The function signature in the PRD had required parameters, but made them all optional to match the existing client behavior (headers can be partially specified)
+  - Useful context: The build_genai_headers function returns an empty dict when no values are provided, which allows callers to pass it directly to default_headers without needing a None check
+---
+
+## 2026-02-01 - US-014
+- What was implemented: Added resolve_genai_endpoint() function for endpoint URL resolution with proper slash handling and provider-specific suffixes
+- Files changed:
+  - services/llm_service/core/llm/genai_platform.py (added resolve_genai_endpoint function and DEFAULT_GENAI_PATH constant)
+  - tests/test_genai_platform.py (added 18 unit tests for endpoint resolution)
+- **Learnings for future iterations:**
+  - Patterns discovered: Azure OpenAI uses the endpoint directly, while Vertex AI requires a /vertexai suffix - the resolve_genai_endpoint function handles this by checking for ProviderID.VERTEX_AI
+  - Gotchas encountered: Default path is "stg/v1" in existing code (azure_openai.py:105, vertex.py:114) - added as DEFAULT_GENAI_PATH constant for consistency
+  - Useful context: The function normalizes both base URL (strips trailing slashes) and path (strips leading/trailing slashes), then joins them with a single slash - this prevents double-slash issues in URL construction
+---
+
+## 2026-02-01 - US-015
+- What was implemented: Added validate_genai_config() function to validate GenAI Platform configuration at startup
+- Files changed:
+  - services/llm_service/core/llm/genai_platform.py (added validate_genai_config function with imports for ConfigurationError and Settings)
+  - tests/test_genai_platform.py (added 9 unit tests for validation)
+- **Learnings for future iterations:**
+  - Patterns discovered: Use TYPE_CHECKING import guard for Settings type hint to avoid circular imports - the function only needs the type for annotations, not at runtime
+  - Gotchas encountered: Empty strings should be treated as missing values (falsy check with `if not value`) - same validation approach used by existing APIKeyCredentialProvider
+  - Useful context: The ConfigurationError in exceptions.py takes an optional details dict - include missing_fields list for programmatic error handling by callers
+---
+
+## 2026-02-01 - US-016
+- What was implemented: Refactored Azure OpenAI client to use shared GenAI Platform module functions
+- Files changed:
+  - services/llm_service/core/llm/azure_openai.py (imported build_genai_headers and resolve_genai_endpoint; replaced inline implementations)
+- **Learnings for future iterations:**
+  - Patterns discovered: The ProviderID.AZURE_OPENAI is passed to resolve_genai_endpoint() but it doesn't add a suffix (only VERTEX_AI gets /vertexai suffix) - this is the correct behavior since Azure OpenAI uses standard OpenAI-compatible paths
+  - Gotchas encountered: Import ordering is checked by ruff - run `ruff check --fix` to auto-sort imports after adding new ones
+  - Useful context: The refactoring was straightforward because the genai_platform.py functions were designed to match existing Azure/Vertex client usage patterns (header keys: 'userid', 'project-name')
+---
+
+## 2026-02-01 - US-017
+- What was implemented: Refactored Vertex client to use shared GenAI Platform module functions
+- Files changed:
+  - services/llm_service/core/llm/vertex.py (imported build_genai_headers and resolve_genai_endpoint from genai_platform.py; replaced inline endpoint construction and header building)
+- **Learnings for future iterations:**
+  - Patterns discovered: The resolve_genai_endpoint() function automatically appends /vertexai suffix when ProviderID.VERTEX_AI is passed, so no manual suffix handling needed
+  - Gotchas encountered: The genai_path default in _get_endpoint() was changed from "stg/v1" to None since resolve_genai_endpoint() has its own DEFAULT_GENAI_PATH constant
+  - Useful context: Both Azure and Vertex clients now use identical patterns for GenAI Platform integration: resolve_genai_endpoint() for URL building and build_genai_headers() for headers - this makes maintenance easier
+---
+
+## 2026-02-01 - US-018
+- What was implemented: Created nested OpenAISettings dataclass for OpenAI provider configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added OpenAISettings class with env_prefix='OPENAI_', added openai field to Settings, removed flat openai_* fields)
+  - services/llm_service/core/llm/openai_client.py (updated to use settings.openai.api_key, settings.openai.model, settings.openai.base_url)
+- **Learnings for future iterations:**
+  - Patterns discovered: Use BaseSettings with model_config containing env_prefix for automatic environment variable binding (e.g., OPENAI_API_KEY maps to api_key field)
+  - Gotchas encountered: The nested settings class needs its own SettingsConfigDict with env_file settings to properly load from .env files
+  - Useful context: Use Field(default_factory=...) for nested settings in the parent class to ensure each instance gets its own settings object; all 158 tests pass confirming backward compatibility
+---
+
+## 2026-02-01 - US-019
+- What was implemented: Created nested OpenRouterSettings dataclass for OpenRouter provider configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added OpenRouterSettings class with env_prefix='OPENROUTER_', added openrouter field to Settings, removed flat openrouter_* fields)
+  - services/llm_service/core/llm/openrouter_client.py (updated to use settings.openrouter.api_key, settings.openrouter.model, settings.openrouter.base_url, settings.openrouter.site_url, settings.openrouter.app_name)
+- **Learnings for future iterations:**
+  - Patterns discovered: The pattern is identical to OpenAISettings - create a BaseSettings subclass with env_prefix, then add it as a Field(default_factory=...) in the parent Settings class
+  - Gotchas encountered: None - clean implementation following the established pattern from US-018
+  - Useful context: OpenRouter has more fields than OpenAI (site_url, app_name for custom headers) but the pattern scales well; all 158 tests pass confirming backward compatibility
+---
+
+## 2026-02-01 - US-020
+- What was implemented: Created nested AzureOpenAISettings dataclass for Azure OpenAI provider configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added AzureOpenAISettings class with env_prefix='AZURE_OPENAI_', added azure_openai field to Settings, removed flat azure_openai_* fields)
+  - services/llm_service/core/llm/azure_openai.py (updated to use settings.azure_openai.endpoint, settings.azure_openai.deployment, settings.azure_openai.api_version, settings.azure_openai.api_key)
+- **Learnings for future iterations:**
+  - Patterns discovered: The pattern is identical to OpenAI/OpenRouter - env_prefix='AZURE_OPENAI_' maps AZURE_OPENAI_ENDPOINT to endpoint field
+  - Gotchas encountered: None - clean implementation following the established pattern from US-018/US-019
+  - Useful context: Azure OpenAI has four fields (endpoint, deployment, api_version, api_key); the api_version field has a sensible default of "2024-02-01"; all 158 tests pass confirming backward compatibility
+---
+
+## 2026-02-01 - US-021
+- What was implemented: Created nested VertexAISettings dataclass for Vertex AI / Gemini provider configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added VertexAISettings class with env_prefix='VERTEX_', added vertex_ai field to Settings, removed flat vertex_* fields)
+  - services/llm_service/core/llm/vertex.py (updated to use settings.vertex_ai.project_id, settings.vertex_ai.location, settings.vertex_ai.model)
+- **Learnings for future iterations:**
+  - Patterns discovered: The pattern is identical to OpenAI/OpenRouter/AzureOpenAI - env_prefix='VERTEX_' maps VERTEX_PROJECT_ID to project_id field
+  - Gotchas encountered: None - clean implementation following the established pattern from US-018/US-019/US-020
+  - Useful context: Vertex AI has four fields (project_id, location, model, api_key); the vertex.py client only uses project_id, location, and model from settings (api_key is unused but included for completeness); all 158 tests pass confirming backward compatibility
+---
+
+## 2026-02-01 - US-022
+- What was implemented: Created nested GenAIPlatformSettings dataclass for GenAI Platform gateway configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added GenAIPlatformSettings class with env_prefix='GENAI_PLATFORM_', added genai_platform field to Settings, removed flat genai_platform_* fields)
+  - services/llm_service/core/llm/genai_platform.py (updated validate_genai_config to use settings.genai_platform.*)
+  - services/llm_service/core/llm/azure_openai.py (updated to use settings.genai_platform.enabled, base_url, path, user_id, project_name)
+  - services/llm_service/core/llm/vertex.py (updated to use settings.genai_platform.enabled, base_url, path, user_id, project_name)
+  - services/llm_service/core/config/models.py (updated get_provider_credentials to use nested settings)
+  - tests/test_genai_platform.py (updated MagicMock tests to use nested genai_platform attributes)
+- **Learnings for future iterations:**
+  - Patterns discovered: GenAI Platform settings are accessed from multiple clients (Azure, Vertex) and models.py - all must be updated consistently
+  - Gotchas encountered: MagicMock tests need nested attributes (settings.genai_platform.enabled) rather than flat (settings.genai_platform_enabled)
+  - Useful context: The factory.py and models.py maintain backward compatibility in the credentials dict format (genai_platform_enabled, etc.) for the from_model_config classmethods; all 158 tests pass
+---
+
+## 2026-02-01 - US-023
+- What was implemented: Created nested TelemetrySettings dataclass for telemetry configuration
+- Files changed:
+  - services/llm_service/core/config/settings.py (added TelemetrySettings class with validation_alias for existing env var names, added telemetry field to Settings, removed flat telemetry fields)
+- **Learnings for future iterations:**
+  - Patterns discovered: When env var names don't follow a consistent prefix pattern (ENABLE_TELEMETRY vs APPINSIGHTS_CONNECTION_STRING), use validation_alias on individual fields instead of env_prefix on the class
+  - Gotchas encountered: The telemetry settings were defined but not yet consumed by any initialization code in the codebase - verified by grepping for usage
+  - Useful context: Pydantic's validation_alias allows mapping arbitrary env var names to field names; all 158 tests pass confirming backward compatibility
+---
+
+## 2026-02-01 - US-024
+- What was implemented: Created settings documentation generator script that introspects pydantic Settings classes
+- Files changed:
+  - scripts/generate_env_docs.py (new file with introspection logic for pydantic-settings classes)
+  - docs/configuration.md (new generated file with markdown tables for all env vars)
+- **Learnings for future iterations:**
+  - Patterns discovered: Use `model_fields` attribute on pydantic BaseSettings to access FieldInfo; env_prefix is in model_config dict
+  - Gotchas encountered: Scripts that modify sys.path before importing project modules need `# ruff: noqa: E402` to suppress import order warnings
+  - Useful context: The get_env_var_name function handles both env_prefix patterns (most providers) and validation_alias patterns (TelemetrySettings) for determining actual env var names
+---
+
+## 2026-02-01 - US-025
+- What was implemented: Integrated LLMDispatcher into FastAPI app for rate limiting and concurrency control on LLM endpoints
+- Files changed:
+  - services/llm_service/main.py (imported get_dispatcher, initialized during startup, wrapped /v1/generate and /v1/generate-stream endpoints)
+  - services/llm_service/api/registry.py (exposed resolve_model() as public method for provider resolution)
+  - tests/test_main.py (new file with 3 unit tests for dispatcher integration)
+- **Learnings for future iterations:**
+  - Patterns discovered: The LLMDispatcher uses `async with await dispatcher.acquire(provider)` pattern - acquire() returns an awaitable context manager, not a direct context manager
+  - Gotchas encountered: PRD mentioned /v1/chat/completions but actual endpoints are /v1/generate and /v1/generate-stream - always verify endpoint names in the codebase
+  - Useful context: For streaming endpoints, the dispatcher acquisition happens inside the async generator (stream_generator) function so the slot is held for the entire stream duration, not just the request start
+---
+
+## 2026-02-01 - US-026
+- What was implemented: Added dispatcher_status field to /health endpoint with active_requests, queue_depth, and rate_limit_remaining
+- Files changed:
+  - services/llm_service/core/llm/dispatcher.py (added get_status() method for aggregated status metrics)
+  - services/llm_service/main.py (added dispatcher_status to health endpoint response)
+  - tests/test_main.py (added unit test for dispatcher_status field in health response)
+- **Learnings for future iterations:**
+  - Patterns discovered: The dispatcher.get_status() method aggregates metrics across all registered providers - useful for health checks and monitoring dashboards
+  - Gotchas encountered: The existing test needed to be updated to mock get_dispatcher() since the health endpoint now calls it
+  - Useful context: Rate limiting is considered expected operational behavior, not an unhealthy state - the health endpoint always returns "healthy" status even when providers are rate limited
+---
+
+## 2026-02-01 - US-027
+- What was implemented: Added request queue to dispatcher for rate limited providers
+- Files changed:
+  - services/llm_service/core/config/constants.py (added DEFAULT_MAX_QUEUE_SIZE = 100)
+  - services/llm_service/core/llm/dispatcher.py (added asyncio.Queue to ProviderState, queue waiting with periodic rate limit check, _process_queue() method, updated get_status() to report queue depth)
+  - services/llm_service/core/llm/exceptions.py (added QueueFullError with retry_after and queue_size fields)
+  - tests/test_dispatcher.py (added 6 tests for queue behavior: creation, queuing, overflow, signaling, timeout, status)
+- **Learnings for future iterations:**
+  - Patterns discovered: asyncio.Queue with maxsize works well for bounded queuing; use asyncio.Event for signaling queued coroutines
+  - Gotchas encountered: Queue events need both explicit signaling (mark_success) AND periodic rate limit checks - waiting only on event.wait() would miss natural rate limit expiry
+  - Useful context: The queue wait loop checks both the event and rate_limit.check_and_clear() every 0.5 seconds, allowing requests to proceed when either condition is met
+---
+
+## 2026-02-01 - US-028
+- What was implemented: Added circuit breaker to dispatcher for fail-fast behavior on unhealthy providers
+- Files changed:
+  - services/llm_service/core/config/constants.py (added CIRCUIT_BREAKER_WINDOW_SIZE = 100, CIRCUIT_BREAKER_FAILURE_THRESHOLD = 0.5, CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS = 30.0)
+  - services/llm_service/core/llm/dispatcher.py (added CircuitState enum, CircuitBreaker dataclass with sliding window deque, integrated into ProviderState, updated mark_success/mark_failure/get_stats, updated _update_health to consider circuit state)
+  - services/llm_service/core/llm/exceptions.py (added CircuitOpenError with provider, retry_after, failure_rate fields)
+  - tests/test_dispatcher.py (added 14 tests for circuit breaker: state initialization, recording success/failure, threshold tripping, half-open transitions, integration with dispatcher)
+- **Learnings for future iterations:**
+  - Patterns discovered: Circuit breaker with three states (closed->open->half_open->closed) is the standard pattern; use collections.deque with maxlen for efficient sliding window
+  - Gotchas encountered: ProviderHealth enum already existed - just needed to integrate it with the new CircuitState for health determination
+  - Useful context: Circuit checks happen in DispatcherContext.__aenter__ before any queuing or rate limit checks, providing true fail-fast behavior; minimum 10 samples required before opening circuit to avoid false positives
+---
+
+## 2026-02-01 - US-029
+- What was implemented: Added per-provider health status to /health endpoint
+- Files changed:
+  - services/llm_service/core/llm/dispatcher.py (added get_provider_health() method that returns list of provider health dicts)
+  - services/llm_service/main.py (added providers field to /health response calling get_provider_health())
+  - tests/test_main.py (added test_health_endpoint_includes_provider_health unit test)
+- **Learnings for future iterations:**
+  - Patterns discovered: The dispatcher already had get_stats() for per-provider info, but get_provider_health() provides a cleaner health-focused view
+  - Gotchas encountered: None - the _update_health() method from US-028 already had structlog logging for provider state transitions
+  - Useful context: Success rate is calculated as (1 - failure_rate) from the circuit breaker's sliding window; get_provider_health() returns an empty list when no providers are registered
+---
+
+## 2026-02-01 - US-030
+- What was implemented: Added streaming chunk buffer to retry_async_generator() for potential replay on failure
+- Files changed:
+  - services/llm_service/core/config/constants.py (added DEFAULT_MAX_BUFFER_CHUNKS = 1000)
+  - services/llm_service/core/llm/retry.py (added max_buffer_chunks field to RetryConfig, added chunk_buffer list to retry_async_generator, buffer chunks during iteration, clear on success)
+  - tests/test_retry.py (added TestRetryAsyncGeneratorBuffer class with 4 unit tests)
+- **Learnings for future iterations:**
+  - Patterns discovered: Chunk buffer is a list that grows up to max_buffer_chunks; the buffer is for potential replay (US-031) not for changing what's yielded to the caller
+  - Gotchas encountered: Import asyncio was flagged as unused after adding tests - ruff check --fix auto-removes it
+  - Useful context: Buffer is cleared on successful completion to free memory; buffer size is logged with structlog on retry attempts and max retries exceeded
+---
+
+## 2026-02-01 - US-031
+- What was implemented: Added streaming retry with chunk replay - on retryable failure mid-stream, buffered chunks are replayed before retrying
+- Files changed:
+  - services/llm_service/core/config/constants.py (added DEFAULT_ENABLE_STREAM_REPLAY = True)
+  - services/llm_service/core/llm/retry.py (added enable_stream_replay field to RetryConfig, implemented replay logic with replayed_count tracking to skip already-replayed chunks in retry)
+  - tests/test_retry.py (added TestRetryAsyncGeneratorReplay class with 4 unit tests)
+- **Learnings for future iterations:**
+  - Patterns discovered: The replay mechanism yields buffered chunks after a failure delay, then tracks how many were replayed so the retry skips those chunks - this prevents duplicate chunks reaching the caller
+  - Gotchas encountered: Need to track replayed_count separately from buffer length since buffer may hit max_buffer_chunks limit while yielding more chunks
+  - Useful context: enable_stream_replay can be disabled for cases where replaying is not desired (e.g., if downstream consumers can't handle duplicate chunks); replaying happens after the backoff delay, not immediately after failure
+---
+
+## 2026-02-01 - US-032
+- What was implemented: Added provider_id field to ToolCall model and modified normalize_tool_call_id() to return tuple for preserving original provider IDs
+- Files changed:
+  - shared/protocol/tool_models.py (added provider_id: str | None = None field to ToolCall model)
+  - shared/validators/id_generators.py (modified normalize_tool_call_id() to return tuple[str, str | None])
+  - services/llm_service/core/llm/mixin.py (updated _convert_tool_calls() to unpack tuple and store provider_id)
+  - services/llm_service/core/llm/vertex.py (updated all normalize_tool_call_id() usages to unpack tuple, store provider_id in ToolCall)
+  - tests/test_validators.py (updated 9 existing tests for tuple return, added 2 new tests for original ID preservation)
+- **Learnings for future iterations:**
+  - Patterns discovered: When modifying a function signature to return additional data (like original_id), all call sites need updating - use grep to find all usages
+  - Gotchas encountered: vertex.py had 5 usages of normalize_tool_call_id() - not just in mixin.py - always check for usages across the codebase
+  - Useful context: The original_id is None when the input was already valid (matching pattern) or was None/empty - this makes the provider_id field only populated when meaningful transformation occurred
+---
+
+## 2026-02-01 - US-033
+- What was implemented: Created mock response fixtures for testing without real API keys
+- Files changed:
+  - tests/fixtures/mock_openai_response.json (new file with valid chat completion response including usage stats)
+  - tests/fixtures/mock_openai_stream.json (new file with array of 5 streaming chunks ending with stop reason)
+  - tests/fixtures/mock_tool_call_response.json (new file with response containing two tool calls: get_weather and get_stock_price)
+  - tests/fixtures/mock_error_response.json (new file with rate limit error structure including headers)
+- **Learnings for future iterations:**
+  - Patterns discovered: OpenAI API responses use nested "choices" array with index, message/delta object, and finish_reason; streaming chunks have "delta" instead of "message"
+  - Gotchas encountered: JSON fixtures don't require ruff checking but should be validated with Python's json module to ensure validity
+  - Useful context: The fixtures match OpenAI's API format which is also compatible with OpenRouter - both use the same response structure
+---
+
+## 2026-02-01 - US-034
+- What was implemented: Added --mock-providers pytest flag for running tests with mocked LLM providers
+- Files changed:
+  - tests/conftest.py (added pytest_addoption for --mock-providers flag, mock_providers fixture, pytest_collection_modifyitems for auto-apply, fixture loaders and mock client class)
+- **Learnings for future iterations:**
+  - Patterns discovered: Use pytest_addoption() for CLI flags, pytest_collection_modifyitems() to auto-apply fixtures when flag is set, and pytest.fixture(autouse=False) for optional auto-use
+  - Gotchas encountered: Cannot patch factory.py imports directly since they're local imports inside methods - just patch the client module classes and factory's local imports will use the patched versions
+  - Useful context: The mock_providers fixture creates a MockLLMClient class with generate(), generate_stream(), close(), and from_model_config() methods that return fixture data; all 193 tests pass with and without the flag
+---
+
+## 2026-02-01 - US-035
+- What was implemented: Created cross-provider test suite with parameterized tests validating consistent behavior across all providers
+- Files changed:
+  - tests/test_cross_provider.py (new file with 65 parameterized tests for all 5 providers)
+  - tests/conftest.py (fixed _build_mock_llm_response to create valid ToolCall objects with correct field names)
+- **Learnings for future iterations:**
+  - Patterns discovered: The Usage model in shared/protocol/common.py uses input_tokens/output_tokens/model_name, not prompt_tokens/completion_tokens - OpenAI API field names differ from internal models
+  - Gotchas encountered: ToolCall model requires tool_call_id (not id), args (not arguments), plus audience and scopes fields; conftest.py was creating invalid ToolCall objects that didn't match the actual model
+  - Useful context: The cross-provider tests work with --mock-providers flag; they verify consistent interface behavior (LLMResponse/LLMChunk/ToolCall types) without requiring real API keys
+---
+
+## 2026-02-01 - US-036
+- What was implemented: Added pytest markers for selective integration test execution
+- Files changed:
+  - pyproject.toml (added markers section with integration, provider_openai, provider_openrouter, provider_azure, provider_vertex)
+  - tests/integration/test_llm_providers.py (added pytestmark for integration, class-level provider markers)
+  - tests/integration/test_vertex_integration.py (added pytestmark list with integration and provider_vertex)
+  - tests/integration/README.md (new file documenting marker usage and environment variables)
+- **Learnings for future iterations:**
+  - Patterns discovered: Use `pytestmark = pytest.mark.integration` at module level to apply marker to all tests; use `pytestmark = [mark1, mark2]` for multiple markers
+  - Gotchas encountered: The integration tests directory was untracked and needed to be included; ruff check found f-string without placeholders in test_vertex_integration.py
+  - Useful context: Run `pytest -m provider_vertex` to run only Vertex AI tests, `pytest -m integration` for all integration tests
+---
+
