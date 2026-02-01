@@ -125,6 +125,33 @@ class GenAIPlatformSettings(BaseSettings):
     project_name: str | None = Field(default=None, description="Project name registered in GenAI Platform")
 
 
+class TelemetrySettings(BaseSettings):
+    """Telemetry and observability settings.
+
+    Environment variables:
+    - ENABLE_TELEMETRY: Enable/disable telemetry collection
+    - APPINSIGHTS_CONNECTION_STRING: Azure Application Insights connection string
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=True,
+        validation_alias="ENABLE_TELEMETRY",
+        description="Enable telemetry collection",
+    )
+    appinsights_connection_string: str | None = Field(
+        default=None,
+        validation_alias="APPINSIGHTS_CONNECTION_STRING",
+        description="Azure Application Insights connection string",
+    )
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -163,9 +190,8 @@ class Settings(BaseSettings):
     # Vertex AI / Gemini Configuration (nested settings)
     vertex_ai: VertexAISettings = Field(default_factory=VertexAISettings)
 
-    # Telemetry
-    appinsights_connection_string: str | None = None
-    enable_telemetry: bool = True
+    # Telemetry (nested settings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
     # Service Configuration
     llm_timeout_seconds: int = 60
