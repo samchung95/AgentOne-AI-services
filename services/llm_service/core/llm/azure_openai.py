@@ -7,6 +7,7 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import AzureChatOpenAI
 
+from services.llm_service.core.config.constants import ProviderID
 from services.llm_service.core.config.settings import Settings, get_settings
 from services.llm_service.core.llm.azure_token import get_genai_token_provider
 from services.llm_service.core.llm.base import (
@@ -21,6 +22,10 @@ from services.llm_service.core.llm.credentials import (
     APIKeyCredentialProvider,
     AzureADCredentialProvider,
     CredentialProvider,
+)
+from services.llm_service.core.llm.genai_platform import (
+    build_genai_headers,
+    resolve_genai_endpoint,
 )
 from shared.protocol.common import Usage
 from shared.protocol.tool_models import ToolCall
@@ -84,7 +89,7 @@ class AzureOpenAIClient(BaseLLMClient):
         """Return the Azure OpenAI endpoint URL.
 
         Handles three modes:
-        - GenAI Platform: Constructs endpoint from base URL and path
+        - GenAI Platform: Constructs endpoint from base URL and path using resolve_genai_endpoint()
         - Direct/Settings: Returns the configured Azure endpoint
 
         Returns:
@@ -102,8 +107,11 @@ class AzureOpenAIClient(BaseLLMClient):
             direct_endpoint = self._direct_endpoint or ""
 
         if genai_enabled and genai_base_url:
-            path = genai_path.lstrip("/") if genai_path else "stg/v1"
-            return f"{genai_base_url.rstrip('/')}/{path}"
+            return resolve_genai_endpoint(
+                base_url=genai_base_url,
+                path=genai_path,
+                provider=ProviderID.AZURE_OPENAI,
+            )
 
         return direct_endpoint
 
@@ -150,7 +158,7 @@ class AzureOpenAIClient(BaseLLMClient):
         Returns:
             Configured AzureChatOpenAI client.
         """
-        # Get API version from settings or direct config
+        # Get API version and GenAI Platform settings
         if self._settings:
             api_version = self._settings.azure_openai_api_version
             genai_enabled = self._settings.genai_platform_enabled
@@ -164,12 +172,11 @@ class AzureOpenAIClient(BaseLLMClient):
             genai_user_id = self._genai_platform_user_id
             genai_project_name = self._genai_platform_project_name
 
-        # Build headers for GenAI Platform
-        headers: dict[str, str] = {}
-        if genai_user_id:
-            headers["userid"] = genai_user_id
-        if genai_project_name:
-            headers["project-name"] = genai_project_name
+        # Build headers for GenAI Platform using shared module
+        headers = build_genai_headers(
+            user_id=genai_user_id,
+            project_name=genai_project_name,
+        )
 
         # Extract API key from credentials (could be 'api_key' or 'token')
         api_key = credentials.get("api_key") or credentials.get("token", "")
