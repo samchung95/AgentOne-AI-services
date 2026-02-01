@@ -33,7 +33,7 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
         """
         self._settings = settings or get_settings()
         self._client_instance: AsyncOpenAI | None = None
-        self._model_name = self._settings.openai_model
+        self._model_name = self._settings.openai.model
         self._direct_api_key: str | None = None
         self._direct_base_url: str | None = None
 
@@ -69,7 +69,7 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
             The base URL for OpenAI API, or empty string for default.
         """
         if self._settings:
-            return self._settings.openai_base_url or ""
+            return self._settings.openai.base_url or ""
         return self._direct_base_url or ""
 
     def _get_credential_provider(self) -> CredentialProvider:
@@ -79,7 +79,7 @@ class OpenAIClient(BaseLLMClient, OpenAICompatibleMixin):
             APIKeyCredentialProvider with the configured API key.
         """
         if self._settings:
-            api_key = self._settings.openai_api_key or ""
+            api_key = self._settings.openai.api_key or ""
         else:
             api_key = self._direct_api_key or ""
         return APIKeyCredentialProvider(api_key)

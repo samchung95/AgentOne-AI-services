@@ -20,6 +20,25 @@ _LOAD_ENV_FILE = os.getenv("LLM_SERVICE_LOAD_ENV_FILE", "true").lower() not in {
 _ENV_FILE = str(_DEFAULT_ENV_FILE) if _LOAD_ENV_FILE else None
 
 
+class OpenAISettings(BaseSettings):
+    """OpenAI provider settings.
+
+    Environment variables are prefixed with OPENAI_ (e.g., OPENAI_API_KEY).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENAI_",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    api_key: str | None = Field(default=None, description="OpenAI API key")
+    model: str = Field(default="gpt-4-turbo", description="Default OpenAI model name")
+    base_url: str | None = Field(default=None, description="Custom OpenAI API base URL")
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -64,10 +83,8 @@ class Settings(BaseSettings):
         default=None, description="Project name registered in GenAI Platform"
     )
 
-    # OpenAI Configuration
-    openai_api_key: str | None = None
-    openai_model: str = "gpt-4-turbo"
-    openai_base_url: str | None = None
+    # OpenAI Configuration (nested settings)
+    openai: OpenAISettings = Field(default_factory=OpenAISettings)
 
     # OpenRouter Configuration
     openrouter_api_key: str | None = None
