@@ -180,15 +180,24 @@ class TestDispatcherIntegration:
 
     def test_health_endpoint_returns_registry_stats(self):
         """Test that /health endpoint includes registry stats."""
-        with patch(
-            "services.llm_service.main.get_registry"
-        ) as mock_get_registry:
+        with (
+            patch("services.llm_service.main.get_registry") as mock_get_registry,
+            patch("services.llm_service.main.get_dispatcher") as mock_get_dispatcher,
+        ):
             mock_registry = MagicMock()
             mock_registry.get_stats.return_value = {
                 "cached_clients": 2,
                 "client_keys": ["openrouter:gpt-4o", "openai:gpt-4o"],
             }
             mock_get_registry.return_value = mock_registry
+
+            mock_dispatcher = MagicMock()
+            mock_dispatcher.get_status.return_value = {
+                "active_requests": 0,
+                "queue_depth": 0,
+                "rate_limit_remaining": 10,
+            }
+            mock_get_dispatcher.return_value = mock_dispatcher
 
             from services.llm_service.main import app
 
@@ -202,3 +211,39 @@ class TestDispatcherIntegration:
             assert data["service"] == "llm_service"
             assert "registry" in data
             assert data["registry"]["cached_clients"] == 2
+
+    def test_health_endpoint_includes_dispatcher_status(self):
+        """Test that /health endpoint includes dispatcher_status field."""
+        with (
+            patch("services.llm_service.main.get_registry") as mock_get_registry,
+            patch("services.llm_service.main.get_dispatcher") as mock_get_dispatcher,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.get_stats.return_value = {"cached_clients": 0}
+            mock_get_registry.return_value = mock_registry
+
+            mock_dispatcher = MagicMock()
+            mock_dispatcher.get_status.return_value = {
+                "active_requests": 5,
+                "queue_depth": 3,
+                "rate_limit_remaining": 7,
+            }
+            mock_get_dispatcher.return_value = mock_dispatcher
+
+            from services.llm_service.main import app
+
+            client = TestClient(app)
+
+            response = client.get("/health")
+            assert response.status_code == 200
+            data = response.json()
+
+            # Verify dispatcher_status structure
+            assert "dispatcher_status" in data
+            dispatcher_status = data["dispatcher_status"]
+            assert dispatcher_status["active_requests"] == 5
+            assert dispatcher_status["queue_depth"] == 3
+            assert dispatcher_status["rate_limit_remaining"] == 7
+
+            # Verify status is always "healthy" (even with active requests)
+            assert data["status"] == "healthy"

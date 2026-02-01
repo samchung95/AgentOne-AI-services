@@ -111,12 +111,24 @@ def _convert_tools(tools: list[dict[str, Any]] | None) -> list[LLMToolDefinition
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    Returns healthy status even when rate limited (rate limiting is expected
+    behavior, not an unhealthy state).
+
+    Response includes:
+    - status: Always "healthy" (service is operational)
+    - service: Service name
+    - registry: Client registry statistics
+    - dispatcher_status: Rate limiting and concurrency status
+    """
     registry = get_registry()
+    dispatcher = get_dispatcher()
     return {
         "status": "healthy",
         "service": "llm_service",
         "registry": registry.get_stats(),
+        "dispatcher_status": dispatcher.get_status(),
     }
 
 

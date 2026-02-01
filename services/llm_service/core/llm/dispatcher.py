@@ -341,6 +341,38 @@ class LLMDispatcher:
             }
         }
 
+    def get_status(self) -> dict[str, Any]:
+        """Get dispatcher status for health endpoint.
+
+        Returns status fields:
+        - active_requests: Total active requests across all providers
+        - queue_depth: Total pending requests across all providers
+        - rate_limit_remaining: Number of concurrent slots remaining
+
+        Returns:
+            Status dictionary for health endpoint.
+        """
+        active_requests = sum(
+            state.active_requests for state in self._providers.values()
+        )
+        queue_depth = sum(
+            state.pending_requests for state in self._providers.values()
+        )
+
+        # Calculate total capacity and remaining slots
+        total_capacity = len(self._providers) * self.config.max_concurrent_requests
+        rate_limit_remaining = max(0, total_capacity - active_requests)
+
+        # If no providers registered yet, report full capacity based on config
+        if not self._providers:
+            rate_limit_remaining = self.config.max_concurrent_requests
+
+        return {
+            "active_requests": active_requests,
+            "queue_depth": queue_depth,
+            "rate_limit_remaining": rate_limit_remaining,
+        }
+
 
 class DispatcherContext:
     """Context manager for dispatched requests.
