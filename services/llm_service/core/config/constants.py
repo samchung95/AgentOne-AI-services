@@ -72,6 +72,25 @@ DISPATCHER_HEALTH_CHECK_INTERVAL_SECONDS: Final[float] = 60.0
 RATE_LIMIT_WINDOW_SECONDS: Final[int] = 60
 
 # =============================================================================
+# Circuit Breaker Configuration
+# =============================================================================
+
+#: Number of requests to track in circuit breaker sliding window
+#: Used to calculate failure rate for circuit breaker decisions
+#: Valid range: 10-1000
+CIRCUIT_BREAKER_WINDOW_SIZE: Final[int] = 100
+
+#: Failure rate threshold (0.0-1.0) to open the circuit
+#: Circuit opens when failure rate exceeds this threshold
+#: Valid range: 0.1-1.0
+CIRCUIT_BREAKER_FAILURE_THRESHOLD: Final[float] = 0.5  # 50%
+
+#: Seconds to wait before transitioning from open to half-open
+#: Allows testing if provider has recovered
+#: Valid range: 5-300
+CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS: Final[float] = 30.0
+
+# =============================================================================
 # Token Management
 # =============================================================================
 

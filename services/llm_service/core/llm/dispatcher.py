@@ -9,6 +9,7 @@ Provides centralized control over LLM API requests:
 """
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -17,6 +18,9 @@ from typing import Any, TypeVar
 import structlog
 
 from services.llm_service.core.config.constants import (
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS,
+    CIRCUIT_BREAKER_WINDOW_SIZE,
     DEFAULT_MAX_CONCURRENT_LLM_REQUESTS,
     DEFAULT_MAX_QUEUE_SIZE,
     DISPATCHER_HEALTH_CHECK_INTERVAL_SECONDS,
@@ -36,6 +40,20 @@ class ProviderHealth(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"  # Experiencing rate limits
     UNHEALTHY = "unhealthy"  # Multiple failures
+
+
+class CircuitState(str, Enum):
+    """Circuit breaker state for a provider.
+
+    State machine:
+    - CLOSED: Normal operation, requests flow through
+    - OPEN: Circuit is tripped, requests are rejected (fail fast)
+    - HALF_OPEN: Testing if provider has recovered
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 @dataclass
@@ -103,6 +121,132 @@ class RateLimitState:
 
 
 @dataclass
+class CircuitBreaker:
+    """Circuit breaker for a provider.
+
+    Tracks request success/failure in a sliding window and manages
+    circuit state transitions.
+
+    Attributes:
+        state: Current circuit state (closed, open, half_open).
+        window_size: Number of requests to track in sliding window.
+        failure_threshold: Failure rate (0.0-1.0) to open circuit.
+        recovery_timeout_seconds: Seconds to wait before half-open.
+        results: Sliding window of request results (True=success, False=failure).
+        opened_at: When the circuit was opened.
+    """
+
+    state: CircuitState = CircuitState.CLOSED
+    window_size: int = CIRCUIT_BREAKER_WINDOW_SIZE
+    failure_threshold: float = CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    recovery_timeout_seconds: float = CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS
+    results: deque[bool] = field(
+        default_factory=lambda: deque(maxlen=CIRCUIT_BREAKER_WINDOW_SIZE)
+    )
+    opened_at: datetime | None = None
+
+    def record_success(self) -> None:
+        """Record a successful request."""
+        self.results.append(True)
+
+        # Half-open -> closed on success
+        if self.state == CircuitState.HALF_OPEN:
+            self._transition_to(CircuitState.CLOSED)
+
+    def record_failure(self) -> None:
+        """Record a failed request."""
+        self.results.append(False)
+
+        # Check if we should open the circuit
+        if self.state == CircuitState.CLOSED:
+            if self._should_open():
+                self._transition_to(CircuitState.OPEN)
+        elif self.state == CircuitState.HALF_OPEN:
+            # Half-open -> open on failure
+            self._transition_to(CircuitState.OPEN)
+
+    def _should_open(self) -> bool:
+        """Check if circuit should open based on failure rate.
+
+        Returns:
+            True if failure rate exceeds threshold with sufficient samples.
+        """
+        # Need at least 10 samples to make a decision
+        if len(self.results) < 10:
+            return False
+
+        failure_count = sum(1 for r in self.results if not r)
+        failure_rate = failure_count / len(self.results)
+        return failure_rate >= self.failure_threshold
+
+    def _transition_to(self, new_state: CircuitState) -> None:
+        """Transition to a new circuit state.
+
+        Args:
+            new_state: The new circuit state.
+        """
+        old_state = self.state
+        self.state = new_state
+
+        if new_state == CircuitState.OPEN:
+            self.opened_at = datetime.now(UTC)
+        elif new_state == CircuitState.CLOSED:
+            self.opened_at = None
+            # Clear the window on recovery
+            self.results.clear()
+
+        logger.info(
+            "circuit_breaker_transition",
+            old_state=old_state.value,
+            new_state=new_state.value,
+        )
+
+    def check_state(self) -> CircuitState:
+        """Check and potentially update circuit state.
+
+        If the circuit is open and recovery timeout has elapsed,
+        transitions to half-open state.
+
+        Returns:
+            Current circuit state after any transitions.
+        """
+        if self.state == CircuitState.OPEN and self.opened_at:
+            elapsed = (datetime.now(UTC) - self.opened_at).total_seconds()
+            if elapsed >= self.recovery_timeout_seconds:
+                self._transition_to(CircuitState.HALF_OPEN)
+
+        return self.state
+
+    def is_request_allowed(self) -> bool:
+        """Check if a request should be allowed through.
+
+        Returns:
+            True if request is allowed, False if circuit is open.
+        """
+        state = self.check_state()
+
+        if state == CircuitState.CLOSED:
+            return True
+        elif state == CircuitState.HALF_OPEN:
+            # Allow one test request in half-open
+            return True
+        else:
+            # OPEN - reject
+            return False
+
+    def get_failure_rate(self) -> float:
+        """Get current failure rate.
+
+        Returns:
+            Failure rate as float 0.0-1.0, or 0.0 if no samples.
+        """
+        if not self.results:
+            return 0.0
+        failure_count = sum(1 for r in self.results if not r)
+        return failure_count / len(self.results)
+
+
+@dataclass
 class DispatcherConfig:
     """Configuration for the LLM dispatcher.
 
@@ -131,6 +275,7 @@ class ProviderState:
         name: Provider name.
         health: Current health status.
         rate_limit: Rate limit tracking.
+        circuit_breaker: Circuit breaker for fail-fast behavior.
         semaphore: Concurrency limiter.
         queue: Queue for pending requests when rate limited.
         max_queue_size: Maximum queue size for this provider.
@@ -143,6 +288,7 @@ class ProviderState:
     name: str
     health: ProviderHealth = ProviderHealth.HEALTHY
     rate_limit: RateLimitState = field(default_factory=RateLimitState)
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
     semaphore: asyncio.Semaphore | None = None
     queue: asyncio.Queue[asyncio.Event] | None = None
     max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE
@@ -264,6 +410,7 @@ class LLMDispatcher:
         if provider in self._providers:
             state = self._providers[provider]
             state.rate_limit.mark_success()
+            state.circuit_breaker.record_success()
             state.total_requests += 1
             self._update_health(state)
             # Signal queued requests that rate limit is cleared
@@ -279,6 +426,7 @@ class LLMDispatcher:
         if provider in self._providers:
             state = self._providers[provider]
             state.total_failures += 1
+            state.circuit_breaker.record_failure()
             if is_rate_limit:
                 state.rate_limit.mark_limited()
             self._update_health(state)
@@ -286,13 +434,24 @@ class LLMDispatcher:
     def _update_health(self, state: ProviderState) -> None:
         """Update provider health based on current state.
 
+        Health is determined by both rate limit and circuit breaker states:
+        - UNHEALTHY: Circuit is open OR 3+ consecutive rate limits
+        - DEGRADED: Circuit is half-open OR currently rate limited
+        - HEALTHY: Circuit is closed AND not rate limited
+
         Args:
             state: Provider state to update.
         """
         old_health = state.health
+        circuit_state = state.circuit_breaker.check_state()
 
-        if state.rate_limit.consecutive_limits >= 3:
+        # Check circuit breaker state first (takes precedence)
+        if circuit_state == CircuitState.OPEN:
             state.health = ProviderHealth.UNHEALTHY
+        elif state.rate_limit.consecutive_limits >= 3:
+            state.health = ProviderHealth.UNHEALTHY
+        elif circuit_state == CircuitState.HALF_OPEN:
+            state.health = ProviderHealth.DEGRADED
         elif state.rate_limit.is_limited:
             state.health = ProviderHealth.DEGRADED
         else:
@@ -304,6 +463,7 @@ class LLMDispatcher:
                 provider=state.name,
                 old_health=old_health.value,
                 new_health=state.health.value,
+                circuit_state=circuit_state.value,
             )
 
     def _process_queue(self, state: ProviderState) -> None:
@@ -363,6 +523,8 @@ class LLMDispatcher:
                 "health": state.health.value,
                 "is_rate_limited": state.rate_limit.is_limited,
                 "consecutive_limits": state.rate_limit.consecutive_limits,
+                "circuit_state": state.circuit_breaker.state.value,
+                "failure_rate": state.circuit_breaker.get_failure_rate(),
                 "active_requests": state.active_requests,
                 "pending_requests": state.pending_requests,
                 "total_requests": state.total_requests,
@@ -374,6 +536,8 @@ class LLMDispatcher:
                 name: {
                     "health": state.health.value,
                     "is_rate_limited": state.rate_limit.is_limited,
+                    "circuit_state": state.circuit_breaker.state.value,
+                    "failure_rate": state.circuit_breaker.get_failure_rate(),
                     "active_requests": state.active_requests,
                     "total_requests": state.total_requests,
                 }
@@ -434,16 +598,29 @@ class DispatcherContext:
         self._queue_event: asyncio.Event | None = None
 
     async def __aenter__(self) -> "DispatcherContext":
-        """Enter the context - queue if rate limited, wait for slot.
+        """Enter the context - check circuit breaker, queue if rate limited, wait for slot.
 
+        If the circuit breaker is open, a CircuitOpenError is raised immediately.
         If the provider is rate limited, requests are queued. When the queue
         is full, a QueueFullError is raised with a Retry-After value.
 
         Raises:
+            CircuitOpenError: When the circuit breaker is open.
             QueueFullError: When the queue is full and cannot accept more requests.
             asyncio.TimeoutError: When the queued request times out.
         """
-        from services.llm_service.core.llm.exceptions import QueueFullError
+        from services.llm_service.core.llm.exceptions import (
+            CircuitOpenError,
+            QueueFullError,
+        )
+
+        # Check circuit breaker first (fail fast)
+        if not self.state.circuit_breaker.is_request_allowed():
+            raise CircuitOpenError(
+                provider=self.state.name,
+                retry_after=self.state.circuit_breaker.recovery_timeout_seconds,
+                failure_rate=self.state.circuit_breaker.get_failure_rate(),
+            )
 
         self.state.pending_requests += 1
 

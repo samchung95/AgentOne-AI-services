@@ -150,3 +150,30 @@ class QueueFullError(LLMRateLimitError):
             "queue_size": queue_size,
         }
         self.queue_size = queue_size
+
+
+class CircuitOpenError(LLMError):
+    """Circuit breaker is open - provider is unhealthy.
+
+    This error is raised when the circuit breaker for a provider is open,
+    indicating the provider has been experiencing high failure rates.
+    Requests should be retried after the recovery timeout.
+    """
+
+    def __init__(self, provider: str, retry_after: float, failure_rate: float):
+        super().__init__(
+            message=(
+                f"Circuit breaker open for {provider} "
+                f"(failure_rate={failure_rate:.1%}). Retry after {retry_after}s"
+            ),
+            code="CIRCUIT_OPEN",
+            details={
+                "provider": provider,
+                "retry_after": retry_after,
+                "failure_rate": failure_rate,
+            },
+            retryable=True,
+        )
+        self.provider = provider
+        self.retry_after = retry_after
+        self.failure_rate = failure_rate
