@@ -1,0 +1,41 @@
+{
+  "id": "chatcmpl-tool123",
+  "object": "chat.completion",
+  "created": 1706745600,
+  "model": "gpt-4-turbo-preview",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"location\": \"San Francisco\", \"unit\": \"celsius\"}"
+            }
+          },
+          {
+            "id": "call_def456",
+            "type": "function",
+            "function": {
+              "name": "get_stock_price",
+              "arguments": "{\"symbol\": \"AAPL\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 50,
+    "completion_tokens": 35,
+    "total_tokens": 85
+  },
+  "system_fingerprint": "fp_abc123"
+}

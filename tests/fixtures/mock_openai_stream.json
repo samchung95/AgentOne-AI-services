@@ -1,0 +1,91 @@
+[
+  {
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion.chunk",
+    "created": 1706745600,
+    "model": "gpt-4-turbo-preview",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "role": "assistant",
+          "content": ""
+        },
+        "logprobs": null,
+        "finish_reason": null
+      }
+    ],
+    "system_fingerprint": "fp_abc123"
+  },
+  {
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion.chunk",
+    "created": 1706745600,
+    "model": "gpt-4-turbo-preview",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "Hello"
+        },
+        "logprobs": null,
+        "finish_reason": null
+      }
+    ],
+    "system_fingerprint": "fp_abc123"
+  },
+  {
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion.chunk",
+    "created": 1706745600,
+    "model": "gpt-4-turbo-preview",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "!"
+        },
+        "logprobs": null,
+        "finish_reason": null
+      }
+    ],
+    "system_fingerprint": "fp_abc123"
+  },
+  {
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion.chunk",
+    "created": 1706745600,
+    "model": "gpt-4-turbo-preview",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " How can I help you today?"
+        },
+        "logprobs": null,
+        "finish_reason": null
+      }
+    ],
+    "system_fingerprint": "fp_abc123"
+  },
+  {
+    "id": "chatcmpl-abc123",
+    "object": "chat.completion.chunk",
+    "created": 1706745600,
+    "model": "gpt-4-turbo-preview",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 8,
+      "total_tokens": 18
+    },
+    "system_fingerprint": "fp_abc123"
+  }
+]
