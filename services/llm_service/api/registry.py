@@ -28,7 +28,7 @@ class LLMClientRegistry:
         """Generate cache key for a provider/model combination."""
         return f"{provider}:{model_name}"
 
-    def _resolve_model(self, use_case: str, model: str | None) -> ModelInfo:
+    def resolve_model(self, use_case: str, model: str | None) -> ModelInfo:
         """Resolve model info from use case and optional model string.
 
         Args:
@@ -52,6 +52,10 @@ class LLMClientRegistry:
 
         # Fall back to use case default
         return get_model_for_use_case(use_case)
+
+    def _resolve_model(self, use_case: str, model: str | None) -> ModelInfo:
+        """Deprecated: use resolve_model() instead."""
+        return self.resolve_model(use_case, model)
 
     async def get_client(
         self,

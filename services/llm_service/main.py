@@ -17,13 +17,13 @@ from fastapi.responses import StreamingResponse
 from services.llm_service.api.protocol import (
     GenerateRequest,
     GenerateResponse,
-    StreamChunk,
     ToolCallResponse,
     UsageResponse,
 )
 from services.llm_service.api.registry import get_registry
 from services.llm_service.core.config.settings import get_settings
-from services.llm_service.core.llm.base import LLMMessage, LLMToolDefinition, TextContent, ImageContent
+from services.llm_service.core.llm.base import ImageContent, LLMMessage, LLMToolDefinition, TextContent
+from services.llm_service.core.llm.dispatcher import get_dispatcher
 
 logger = structlog.get_logger(__name__)
 
@@ -32,10 +32,16 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
+    # Initialize dispatcher (triggers lazy creation of global singleton)
+    dispatcher = get_dispatcher()
     logger.info(
         "llm_service_starting",
         config_profile=settings.config_profile,
         debug=settings.debug,
+        dispatcher_config={
+            "max_concurrent_requests": dispatcher.config.max_concurrent_requests,
+            "queue_timeout_seconds": dispatcher.config.queue_timeout_seconds,
+        },
     )
     yield
     # Cleanup: close all cached clients
@@ -109,7 +115,7 @@ async def health_check():
     registry = get_registry()
     return {
         "status": "healthy",
-        "service": "llm-service",
+        "service": "llm_service",
         "registry": registry.get_stats(),
     }
 
@@ -125,20 +131,27 @@ async def generate(request: GenerateRequest):
         Complete LLM response with content, tool calls, and usage.
     """
     registry = get_registry()
+    dispatcher = get_dispatcher()
 
     try:
-        client = await registry.get_client(request.use_case, request.model)
+        # Resolve model to get provider for dispatcher
+        model_info = registry.resolve_model(request.use_case, request.model)
+        provider = model_info.provider
 
-        messages = _convert_messages([m.model_dump() for m in request.messages])
-        tools = _convert_tools([t.model_dump() for t in request.tools] if request.tools else None)
+        # Acquire dispatcher slot for rate limiting and concurrency control
+        async with await dispatcher.acquire(provider):
+            client = await registry.get_client(request.use_case, request.model)
 
-        response = await client.generate(
-            messages=messages,
-            tools=tools,
-            system_prompt=request.system_prompt,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-        )
+            messages = _convert_messages([m.model_dump() for m in request.messages])
+            tools = _convert_tools([t.model_dump() for t in request.tools] if request.tools else None)
+
+            response = await client.generate(
+                messages=messages,
+                tools=tools,
+                system_prompt=request.system_prompt,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+            )
 
         # Convert to response model
         tool_calls = [
@@ -192,43 +205,50 @@ async def generate_stream(request: GenerateRequest):
         StreamingResponse with NDJSON content.
     """
     registry = get_registry()
+    dispatcher = get_dispatcher()
+
+    # Resolve model to get provider for dispatcher
+    model_info = registry.resolve_model(request.use_case, request.model)
+    provider = model_info.provider
 
     async def stream_generator():
         try:
-            client = await registry.get_client(request.use_case, request.model)
+            # Acquire dispatcher slot for rate limiting and concurrency control
+            async with await dispatcher.acquire(provider):
+                client = await registry.get_client(request.use_case, request.model)
 
-            messages = _convert_messages([m.model_dump() for m in request.messages])
-            tools = _convert_tools([t.model_dump() for t in request.tools] if request.tools else None)
+                messages = _convert_messages([m.model_dump() for m in request.messages])
+                tools = _convert_tools([t.model_dump() for t in request.tools] if request.tools else None)
 
-            async for chunk in client.generate_stream(
-                messages=messages,
-                tools=tools,
-                system_prompt=request.system_prompt,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-            ):
-                # Build chunk response
-                chunk_data: dict[str, Any] = {}
+                async for chunk in client.generate_stream(
+                    messages=messages,
+                    tools=tools,
+                    system_prompt=request.system_prompt,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                ):
+                    # Build chunk response
+                    chunk_data: dict[str, Any] = {}
 
-                if chunk.delta:
-                    chunk_data["delta"] = chunk.delta
+                    if chunk.delta:
+                        chunk_data["delta"] = chunk.delta
 
-                if chunk.tool_calls:
-                    chunk_data["tool_calls"] = chunk.tool_calls
+                    if chunk.tool_calls:
+                        chunk_data["tool_calls"] = chunk.tool_calls
 
-                if chunk.finish_reason:
-                    chunk_data["finish_reason"] = chunk.finish_reason
+                    if chunk.finish_reason:
+                        chunk_data["finish_reason"] = chunk.finish_reason
 
-                if chunk.usage:
-                    chunk_data["usage"] = {
-                        "input_tokens": chunk.usage.input_tokens,
-                        "output_tokens": chunk.usage.output_tokens,
-                        "total_tokens": chunk.usage.total_tokens or 0,
-                        "model_name": chunk.usage.model_name,
-                    }
+                    if chunk.usage:
+                        chunk_data["usage"] = {
+                            "input_tokens": chunk.usage.input_tokens,
+                            "output_tokens": chunk.usage.output_tokens,
+                            "total_tokens": chunk.usage.total_tokens or 0,
+                            "model_name": chunk.usage.model_name,
+                        }
 
-                if chunk_data:
-                    yield json.dumps(chunk_data) + "\n"
+                    if chunk_data:
+                        yield json.dumps(chunk_data) + "\n"
 
         except Exception as e:
             logger.exception("stream_error", error=str(e))
