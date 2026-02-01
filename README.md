@@ -64,7 +64,7 @@ GENAI_PLATFORM_BASE_URL=https://genai.yourcompany.com
 
 ```bash
 # Run with uv
-uv run uvicorn services.llm_service.main:app --host 0.0.0.0 --port 8001 --reload
+uv run uvicorn services.llm_service.main:app --host 0.0.0.0 --port 8003 --reload
 
 # Or run directly
 uv run python -m services.llm_service.main
@@ -80,7 +80,7 @@ uv run python -m services.llm_service.main
 
 ```bash
 # Non-streaming
-curl -X POST http://localhost:8001/v1/generate \
+curl -X POST http://localhost:8003/v1/generate \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{"role": "user", "content": "Hello!"}],
@@ -88,7 +88,7 @@ curl -X POST http://localhost:8001/v1/generate \
   }'
 
 # Streaming
-curl -X POST http://localhost:8001/v1/generate-stream \
+curl -X POST http://localhost:8003/v1/generate-stream \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{"role": "user", "content": "Tell me a story"}],
