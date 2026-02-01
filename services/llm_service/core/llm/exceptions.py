@@ -127,3 +127,26 @@ class LLMRateLimitError(LLMError):
             retryable=True,
         )
         self.retry_after = retry_after
+
+
+class QueueFullError(LLMRateLimitError):
+    """Dispatcher queue is full - cannot accept more requests.
+
+    This error is raised when the request queue for a provider is full
+    and no more requests can be queued. Clients should retry after the
+    specified delay.
+    """
+
+    def __init__(self, provider: str, retry_after: float, queue_size: int):
+        super().__init__(provider=provider, retry_after=retry_after)
+        self.code = "QUEUE_FULL"
+        self.message = (
+            f"Request queue full for {provider} "
+            f"(queue_size={queue_size}). Retry after {retry_after}s"
+        )
+        self.details = {
+            "provider": provider,
+            "retry_after": retry_after,
+            "queue_size": queue_size,
+        }
+        self.queue_size = queue_size

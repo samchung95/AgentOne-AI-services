@@ -18,6 +18,7 @@ import structlog
 
 from services.llm_service.core.config.constants import (
     DEFAULT_MAX_CONCURRENT_LLM_REQUESTS,
+    DEFAULT_MAX_QUEUE_SIZE,
     DISPATCHER_HEALTH_CHECK_INTERVAL_SECONDS,
     MAX_RATE_LIMITS_PER_WINDOW,
     QUEUE_TIMEOUT_SECONDS,
@@ -107,6 +108,7 @@ class DispatcherConfig:
 
     Attributes:
         max_concurrent_requests: Maximum concurrent requests per provider.
+        max_queue_size: Maximum requests that can be queued per provider.
         rate_limit_window_seconds: Window for tracking rate limits.
         max_rate_limits_per_window: Max rate limits before marking unhealthy.
         queue_timeout_seconds: Timeout for queued requests.
@@ -114,6 +116,7 @@ class DispatcherConfig:
     """
 
     max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_LLM_REQUESTS
+    max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE
     rate_limit_window_seconds: float = RATE_LIMIT_WINDOW_SECONDS
     max_rate_limits_per_window: int = MAX_RATE_LIMITS_PER_WINDOW
     queue_timeout_seconds: float = QUEUE_TIMEOUT_SECONDS
@@ -129,6 +132,8 @@ class ProviderState:
         health: Current health status.
         rate_limit: Rate limit tracking.
         semaphore: Concurrency limiter.
+        queue: Queue for pending requests when rate limited.
+        max_queue_size: Maximum queue size for this provider.
         pending_requests: Number of requests waiting.
         active_requests: Number of currently executing requests.
         total_requests: Total requests processed.
@@ -139,6 +144,8 @@ class ProviderState:
     health: ProviderHealth = ProviderHealth.HEALTHY
     rate_limit: RateLimitState = field(default_factory=RateLimitState)
     semaphore: asyncio.Semaphore | None = None
+    queue: asyncio.Queue[asyncio.Event] | None = None
+    max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE
     pending_requests: int = 0
     active_requests: int = 0
     total_requests: int = 0
@@ -183,11 +190,14 @@ class LLMDispatcher:
                 self._providers[name] = ProviderState(
                     name=name,
                     semaphore=asyncio.Semaphore(self.config.max_concurrent_requests),
+                    queue=asyncio.Queue(maxsize=self.config.max_queue_size),
+                    max_queue_size=self.config.max_queue_size,
                 )
                 logger.info(
                     "dispatcher_provider_registered",
                     provider=name,
                     max_concurrent=self.config.max_concurrent_requests,
+                    max_queue_size=self.config.max_queue_size,
                 )
             return self._providers[name]
 
@@ -256,6 +266,8 @@ class LLMDispatcher:
             state.rate_limit.mark_success()
             state.total_requests += 1
             self._update_health(state)
+            # Signal queued requests that rate limit is cleared
+            self._process_queue(state)
 
     def mark_failure(self, provider: str, is_rate_limit: bool = False) -> None:
         """Mark a failed request.
@@ -292,6 +304,34 @@ class LLMDispatcher:
                 provider=state.name,
                 old_health=old_health.value,
                 new_health=state.health.value,
+            )
+
+    def _process_queue(self, state: ProviderState) -> None:
+        """Process queued requests when rate limit clears.
+
+        Signals all waiting requests to proceed when rate limit is cleared.
+
+        Args:
+            state: Provider state with queue to process.
+        """
+        if not state.queue or state.queue.empty():
+            return
+
+        # Signal all waiting requests to proceed
+        signaled = 0
+        while not state.queue.empty():
+            try:
+                event = state.queue.get_nowait()
+                event.set()
+                signaled += 1
+            except asyncio.QueueEmpty:
+                break
+
+        if signaled > 0:
+            logger.info(
+                "queue_processed",
+                provider=state.name,
+                requests_signaled=signaled,
             )
 
     def get_health(self, provider: str) -> ProviderHealth:
@@ -346,7 +386,7 @@ class LLMDispatcher:
 
         Returns status fields:
         - active_requests: Total active requests across all providers
-        - queue_depth: Total pending requests across all providers
+        - queue_depth: Total queued requests across all providers
         - rate_limit_remaining: Number of concurrent slots remaining
 
         Returns:
@@ -356,7 +396,8 @@ class LLMDispatcher:
             state.active_requests for state in self._providers.values()
         )
         queue_depth = sum(
-            state.pending_requests for state in self._providers.values()
+            state.queue.qsize() if state.queue else 0
+            for state in self._providers.values()
         )
 
         # Calculate total capacity and remaining slots
@@ -378,6 +419,7 @@ class DispatcherContext:
     """Context manager for dispatched requests.
 
     Handles acquiring/releasing semaphore and tracking metrics.
+    Queues requests when rate limited and rejects when queue is full.
     """
 
     def __init__(self, dispatcher: LLMDispatcher, state: ProviderState):
@@ -389,13 +431,99 @@ class DispatcherContext:
         """
         self.dispatcher = dispatcher
         self.state = state
+        self._queue_event: asyncio.Event | None = None
 
     async def __aenter__(self) -> "DispatcherContext":
-        """Enter the context - wait for rate limit and acquire slot."""
+        """Enter the context - queue if rate limited, wait for slot.
+
+        If the provider is rate limited, requests are queued. When the queue
+        is full, a QueueFullError is raised with a Retry-After value.
+
+        Raises:
+            QueueFullError: When the queue is full and cannot accept more requests.
+            asyncio.TimeoutError: When the queued request times out.
+        """
+        from services.llm_service.core.llm.exceptions import QueueFullError
+
         self.state.pending_requests += 1
 
         try:
-            # Wait for any rate limit to clear
+            # Check if rate limited and queue is needed
+            if self.state.rate_limit.check_and_clear() and self.state.queue:
+                # Calculate retry_after from rate limit state
+                retry_after = self.dispatcher.config.queue_timeout_seconds
+                if self.state.rate_limit.retry_after:
+                    remaining = (
+                        self.state.rate_limit.retry_after - datetime.now(UTC)
+                    ).total_seconds()
+                    if remaining > 0:
+                        retry_after = remaining
+
+                # Try to add to queue (non-blocking check if full)
+                if self.state.queue.full():
+                    raise QueueFullError(
+                        provider=self.state.name,
+                        retry_after=retry_after,
+                        queue_size=self.state.max_queue_size,
+                    )
+
+                # Create event to wait on and add to queue
+                self._queue_event = asyncio.Event()
+                try:
+                    self.state.queue.put_nowait(self._queue_event)
+                except asyncio.QueueFull:
+                    # Race condition - queue filled between check and put
+                    raise QueueFullError(
+                        provider=self.state.name,
+                        retry_after=retry_after,
+                        queue_size=self.state.max_queue_size,
+                    )
+
+                logger.info(
+                    "request_queued",
+                    provider=self.state.name,
+                    queue_depth=self.state.queue.qsize(),
+                    timeout=self.dispatcher.config.queue_timeout_seconds,
+                )
+
+                # Wait for signal, rate limit expiry, or timeout
+                start_time = datetime.now(UTC)
+                timeout_seconds = self.dispatcher.config.queue_timeout_seconds
+
+                while True:
+                    # Calculate remaining timeout
+                    elapsed = (datetime.now(UTC) - start_time).total_seconds()
+                    remaining_timeout = timeout_seconds - elapsed
+
+                    if remaining_timeout <= 0:
+                        logger.warning(
+                            "queued_request_timeout",
+                            provider=self.state.name,
+                            timeout=timeout_seconds,
+                        )
+                        raise TimeoutError(
+                            f"Queued request timed out after {timeout_seconds}s"
+                        )
+
+                    # Check if rate limit has cleared
+                    if not self.state.rate_limit.check_and_clear():
+                        # Rate limit cleared, can proceed
+                        break
+
+                    # Wait for event or timeout, checking periodically
+                    wait_time = min(remaining_timeout, 0.5)  # Check every 0.5s
+                    try:
+                        await asyncio.wait_for(
+                            self._queue_event.wait(),
+                            timeout=wait_time,
+                        )
+                        # Event was signaled, can proceed
+                        break
+                    except TimeoutError:
+                        # Timeout just means we need to check again
+                        continue
+
+            # Wait for any remaining rate limit to clear
             await self.dispatcher.wait_for_rate_limit(self.state)
 
             # Acquire concurrency slot

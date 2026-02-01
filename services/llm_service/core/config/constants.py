@@ -48,6 +48,11 @@ DEFAULT_TIMEOUT_SECONDS: Final[int] = 60
 #: Valid range: 1-20
 DEFAULT_MAX_CONCURRENT_LLM_REQUESTS: Final[int] = 5
 
+#: Maximum requests that can be queued per provider when rate limited
+#: Requests beyond this limit receive a 429 response
+#: Valid range: 10-1000
+DEFAULT_MAX_QUEUE_SIZE: Final[int] = 100
+
 #: Maximum rate limits before marking provider unhealthy
 #: Used by LLM dispatcher for health tracking
 #: Valid range: 3-50
