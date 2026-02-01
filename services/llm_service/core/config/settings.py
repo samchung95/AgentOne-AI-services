@@ -39,6 +39,29 @@ class OpenAISettings(BaseSettings):
     base_url: str | None = Field(default=None, description="Custom OpenAI API base URL")
 
 
+class OpenRouterSettings(BaseSettings):
+    """OpenRouter provider settings.
+
+    Environment variables are prefixed with OPENROUTER_ (e.g., OPENROUTER_API_KEY).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENROUTER_",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    api_key: str | None = Field(default=None, description="OpenRouter API key")
+    model: str = Field(default="openai/gpt-4-turbo", description="Default OpenRouter model name")
+    base_url: str = Field(
+        default="https://openrouter.ai/api/v1", description="OpenRouter API base URL"
+    )
+    site_url: str | None = Field(default=None, description="Site URL for OpenRouter headers")
+    app_name: str | None = Field(default=None, description="Application name for OpenRouter headers")
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -86,12 +109,8 @@ class Settings(BaseSettings):
     # OpenAI Configuration (nested settings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
 
-    # OpenRouter Configuration
-    openrouter_api_key: str | None = None
-    openrouter_model: str = "openai/gpt-4-turbo"
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_site_url: str | None = None
-    openrouter_app_name: str | None = None
+    # OpenRouter Configuration (nested settings)
+    openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
 
     # Vertex AI / Gemini Configuration
     vertex_project_id: str | None = Field(default=None, description="Google Cloud project ID for Vertex AI")

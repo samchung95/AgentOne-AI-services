@@ -41,7 +41,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
         """
         self._settings = settings or get_settings()
         self._client_instance: AsyncOpenAI | None = None
-        self._model_name = self._settings.openrouter_model
+        self._model_name = self._settings.openrouter.model
         self._direct_api_key: str | None = None
         self._direct_base_url: str | None = None
         self._direct_site_url: str | None = None
@@ -85,7 +85,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
             The base URL for OpenRouter API.
         """
         if self._settings:
-            return self._settings.openrouter_base_url
+            return self._settings.openrouter.base_url
         return self._direct_base_url or "https://openrouter.ai/api/v1"
 
     def _get_credential_provider(self) -> CredentialProvider:
@@ -95,7 +95,7 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
             APIKeyCredentialProvider with the configured API key.
         """
         if self._settings:
-            api_key = self._settings.openrouter_api_key or ""
+            api_key = self._settings.openrouter.api_key or ""
         else:
             api_key = self._direct_api_key or ""
         return APIKeyCredentialProvider(api_key)
@@ -116,8 +116,8 @@ class OpenRouterClient(BaseLLMClient, OpenAICompatibleMixin):
 
         # Get OpenRouter-specific settings
         if self._settings:
-            site_url = self._settings.openrouter_site_url
-            app_name = self._settings.openrouter_app_name or "AgentOne"
+            site_url = self._settings.openrouter.site_url
+            app_name = self._settings.openrouter.app_name or "AgentOne"
         else:
             site_url = self._direct_site_url
             app_name = self._direct_app_name or "AgentOne"
