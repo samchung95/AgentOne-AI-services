@@ -62,6 +62,26 @@ class OpenRouterSettings(BaseSettings):
     app_name: str | None = Field(default=None, description="Application name for OpenRouter headers")
 
 
+class AzureOpenAISettings(BaseSettings):
+    """Azure OpenAI provider settings.
+
+    Environment variables are prefixed with AZURE_OPENAI_ (e.g., AZURE_OPENAI_ENDPOINT).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AZURE_OPENAI_",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    endpoint: str | None = Field(default=None, description="Azure OpenAI endpoint URL")
+    deployment: str = Field(default="gpt-4", description="Azure OpenAI deployment name")
+    api_version: str = Field(default="2024-02-01", description="Azure OpenAI API version")
+    api_key: str | None = Field(default=None, description="Azure OpenAI API key")
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -85,11 +105,8 @@ class Settings(BaseSettings):
         description="Configuration profile name (matches config/models.{profile}.yaml).",
     )
 
-    # Azure OpenAI Configuration
-    azure_openai_endpoint: str | None = None
-    azure_openai_deployment: str = "gpt-4"
-    azure_openai_api_version: str = "2024-02-01"
-    azure_openai_api_key: str | None = None
+    # Azure OpenAI Configuration (nested settings)
+    azure_openai: AzureOpenAISettings = Field(default_factory=AzureOpenAISettings)
 
     # GenAI Platform Configuration (Company Azure GenAI Gateway)
     genai_platform_enabled: bool = Field(

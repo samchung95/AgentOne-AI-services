@@ -45,7 +45,7 @@ class AzureOpenAIClient(BaseLLMClient):
         """
         self._settings = settings or get_settings()
         self._client_instance: AzureChatOpenAI | None = None
-        self._model_name = self._settings.azure_openai_deployment
+        self._model_name = self._settings.azure_openai.deployment
         # Direct config attributes (set by from_model_config)
         self._direct_endpoint: str | None = None
         self._direct_api_key: str | None = None
@@ -99,7 +99,7 @@ class AzureOpenAIClient(BaseLLMClient):
             genai_enabled = self._settings.genai_platform_enabled
             genai_base_url = self._settings.genai_platform_base_url
             genai_path = self._settings.genai_platform_path
-            direct_endpoint = self._settings.azure_openai_endpoint
+            direct_endpoint = self._settings.azure_openai.endpoint
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url
@@ -129,7 +129,7 @@ class AzureOpenAIClient(BaseLLMClient):
         if self._settings:
             genai_enabled = self._settings.genai_platform_enabled
             genai_base_url = self._settings.genai_platform_base_url
-            direct_api_key = self._settings.azure_openai_api_key
+            direct_api_key = self._settings.azure_openai.api_key
         else:
             genai_enabled = self._genai_platform_enabled
             genai_base_url = self._genai_platform_base_url
@@ -160,7 +160,7 @@ class AzureOpenAIClient(BaseLLMClient):
         """
         # Get API version and GenAI Platform settings
         if self._settings:
-            api_version = self._settings.azure_openai_api_version
+            api_version = self._settings.azure_openai.api_version
             genai_enabled = self._settings.genai_platform_enabled
             genai_base_url = self._settings.genai_platform_base_url
             genai_user_id = self._settings.genai_platform_user_id
